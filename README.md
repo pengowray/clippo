@@ -63,8 +63,8 @@ method = "auto"           # "wayland" (virtual keyboard protocol), "uinput", or 
 auto_paste = true         # `clippo plain` pastes after replacing the clipboard
 paste_on_select = true    # `clippo menu` pastes the entry you pick
 keys = "shift-insert"     # "shift-insert", "ctrl-v" or "ctrl-shift-v"
-delay_ms = 100            # wait before pasting, so the shortcut keys can be released
-release_modifiers = true  # send Super and Alt key-ups before pasting
+delay_ms = 100            # uinput only: wait before pasting, so the shortcut keys can be released
+release_modifiers = true  # uinput only: send Super and Alt key-ups before pasting
 ```
 
 Pasting presses keys through a virtual keyboard. The Wayland method needs a compositor with

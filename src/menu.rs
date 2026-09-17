@@ -122,7 +122,7 @@ pub fn run(cfg: &Config, store: &Store, paths: &Paths) -> Result<()> {
     };
     copy_entry(store, id)?;
     if cfg.paste.paste_on_select {
-        paste::send(&cfg.paste)?;
+        paste::send(&cfg.paste, true)?;
     }
     Ok(())
 }

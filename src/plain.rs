@@ -31,7 +31,7 @@ pub fn run(cfg: &Config, paths: &Paths, auto_paste: bool) -> Result<()> {
 
     clipboard::copy(None, text.as_bytes())?;
     if auto_paste {
-        paste::send(&cfg.paste)?;
+        paste::send(&cfg.paste, false)?;
     }
     Ok(())
 }

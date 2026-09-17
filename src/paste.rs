@@ -113,10 +113,16 @@ fn decode(line: &str) -> Option<PasteConfig> {
     })
 }
 
+/// Focus needs a moment to return to the app after the menu closes.
+const AFTER_MENU_WAIT: Duration = Duration::from_millis(50);
+
 /// Press the paste keys with the configured method.
-pub fn send(cfg: &PasteConfig) -> Result<()> {
+pub fn send(cfg: &PasteConfig, after_menu: bool) -> Result<()> {
     if cfg.method != PasteMethod::Uinput {
-        sleep(Duration::from_millis(cfg.delay_ms));
+        // Held shortcut keys don't affect the virtual keyboard, so `delay_ms` isn't needed here.
+        if after_menu {
+            sleep(AFTER_MENU_WAIT);
+        }
         match crate::vkbd::paste(cfg.keys) {
             Ok(()) => return Ok(()),
             Err(e) if cfg.method == PasteMethod::Wayland => return Err(e),
