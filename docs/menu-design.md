@@ -337,7 +337,8 @@ Right column, heading `Paste`. Three by default, top to bottom in order of expec
 - Tooltip: the format string and a short hint: `%Y-%m-%d · Change in Settings`.
 - Clicking or Alt+N: close window, put the text on the clipboard, paste.
 - **Not recorded in history.** Mechanism: before copying, the window writes the content hash
-  to `$XDG_RUNTIME_DIR/clippo/skip` (one hash per line, entries older than 10 s ignored);
+  to `$XDG_RUNTIME_DIR/clippo/skip` (one `<unix_secs> <hash>` per line, entries older than
+  10 s ignored);
   `ingest` skips a copy whose hash is listed and removes the line. Cross-process, no protocol
   change, works whether or not `watch` is the parent. The hash must match what `ingest`
   computes: `content_hash(TEXT_MIME, bytes)` where bytes are exactly what `wl-paste` will
@@ -349,8 +350,9 @@ Right column, heading `Paste`. Three by default, top to bottom in order of expec
   before (the top history entry, if it matched; otherwise do nothing, since we cannot restore
   what we did not record). Restoring re-copies the same content, so dedupe keeps history
   unchanged.
-- Configurable: `[[macros]]` array in config with `label` (optional; default is the live
-  value) and `format` (strftime via `chrono`). Up to 9 (Alt+1 to Alt+9). Editable in Settings.
+- Configurable: `[[macros.items]]` array in config with `label` (optional; default is the
+  live value) and `format` (strftime via `chrono`), beside `[macros] restore_clipboard`. Up
+  to 9 (Alt+1 to Alt+9). Editable in Settings.
   A macro with a `label` shows `label` on line 1 and the live value muted on line 2.
 
 Typing text through the virtual keyboard instead of the clipboard was considered and
@@ -389,7 +391,7 @@ The count is real.
 |---|---|---|---|
 | Paste after picking an item | toggle | on | `paste.paste_on_select` |
 | Paste after Paste as plain text (Super+Alt+V) | toggle | on | `paste.auto_paste` |
-| Super+Alt+V also removes Markdown syntax | toggle | on | `paste.plain_strips_markdown` (new) |
+| Super+Alt+V also removes Markdown syntax | toggle | on | `plain.strip_markdown` (new) |
 | Paste by pressing | dropdown: `Shift+Insert (works in most apps and terminals)`, `Ctrl+V`, `Ctrl+Shift+V` | Shift+Insert | `paste.keys` |
 | Restore the previous clipboard after a macro | toggle | on | `macros.restore_clipboard` (new) |
 
@@ -458,7 +460,7 @@ A list of rows, each: `Format` text field, live preview to the right, `Label` te
 4. `expire_days`: `ingest` deletes entries with `last_used` older than N days after
    `enforce_cap`. `list` takes a `since` split so the window gets recent and older sets
    without two queries.
-5. `Config` gets `Serialize`; add `expire_days`, `paste.plain_strips_markdown`, `[macros]`
+5. `Config` gets `Serialize`; add `expire_days`, `plain.strip_markdown`, `[macros]`
    (`restore_clipboard`, `[[macros.items]]` with `format`, `label`). Writer uses `toml_edit`.
 6. Socket protocol (`paste.rs::serve`) gains: `menu toggle`, `reload`, `status` (reply:
    `ocr=<engine|none> watching=1`), `copy <id> [plain|nomd]` (11.2), and a push line

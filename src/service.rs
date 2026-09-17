@@ -164,6 +164,8 @@ pub fn serve(shared: Arc<Shared>, wake_ocr: mpsc::Sender<()>) -> Result<()> {
             },
             Err(e) => format!("error {e}"),
         };
+        // One reply line: a TOML parse error, for one, spans several.
+        let reply: String = reply.split_whitespace().collect::<Vec<_>>().join(" ");
         let _ = (&stream).write_all(format!("{reply}\n").as_bytes());
     }
     Err(anyhow!("clippo socket closed"))
