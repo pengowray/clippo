@@ -25,14 +25,14 @@ The one fact the window must make immediate: **what Enter will paste**. Everythi
 +---------------------------------------------------------------------------+--------------------+
 | ON CLIPBOARD NOW                                                          |  Paste             |
 || fn main() {                                                              | +----------------+ |
-||     println!("hello");                              [T] [x]              | | 14:00      Alt1| |
+||     println!("hello");                              [T] [x]              | | 14:00     Alt+1| |
 ||     let x = compute_stuff(&args);          3 more lines · 412 chars      | +----------------+ |
 |---------------------------------------------------------------------------| +----------------+ |
-|  +--------+  Image 1920×1080 · PNG                          [T] [x]       | | 2026-09-17 Alt2| |
+|  +--------+  Image 1920×1080 · PNG                          [T] [x]       | | 2026-09-17Alt+2| |
 |  |        |  Reading text...                                              | +----------------+ |
 |  |  thumb |                                                               | +----------------+ |
 |  +--------+                                                               | | 2026-09-17     | |
-|---------------------------------------------------------------------------| | 14:00:05   Alt3| |
+|---------------------------------------------------------------------------| | 14:00:05  Alt+3| |
 |  +--------+  Image 640×480 · JPEG                                         | +----------------+ |
 |  |        |  Error 1002: connection refused by upstream                   |                    |
 |  |  thumb |  at proxy.internal:8443 while fetching /api/v2/session        |                    |
@@ -46,16 +46,19 @@ The one fact the window must make immediate: **what Enter will paste**. Everythi
 |---------------------------------------------------------------------------|                    |
 |  Tuesday meeting notes                                                    |                    |
 |  - ship 0.2                                                               |                    |
-|  - fix the paste delay                                            9 lines |                    |
+|  - fix the paste delay                                       6 more lines |                    |
 |---------------------------------------------------------------------------|                    |
 |  +--------+  Image 800×600 · PNG                                          |                    |
 |  |        |  Couldn't read text                                           |                    |
 |  |  thumb |                                                               |                    |
 |  +--------+                                                               |                    |
 +---------------------------------------------------------------------------+--------------------+
-| Enter paste · Shift+Enter paste as text · Del delete · Esc close                                |
+| Enter paste · Shift+Enter paste as text · Shift+Del delete · Esc close                          |
 +------------------------------------------------------------------------------------------------+
 ```
+
+In the mockup row 1 is selected and row 2 is hovered; those are the only two rows that
+show the `[T] [x]` action strip.
 
 Proportions: 100 columns × 32 rows ≈ 8×16 px per cell at 800×500. The list column is
 ~610 px, the macro column ~170 px, the search bar 40 px, the footer 24 px. Roughly 7 rows fit.
@@ -85,20 +88,20 @@ buttons, 28×28 px, with tooltips:
 | Button | Tooltip | Action | Key |
 |---|---|---|---|
 | `T` (text icon) | `Paste as text` | Paste the plain text (for images, the recognised text) | Shift+Enter |
-| `x` | `Delete` | Delete the entry, with undo | Delete |
+| `x` | `Delete` | Delete the entry, with undo | Shift+Delete |
 
 For a text entry `Paste as text` is still shown, since `text/html` and rich copies exist in
 principle; for `text/plain` it does the same as `Paste`, which is fine.
 
 ### 3.1 Text rows
 
-- Up to **3 lines**, verbatim (leading blank lines skipped), monospace only if the content
-  looks like code is *not* attempted; use the UI font. Tabs render as 4 spaces. Whitespace is
+- Up to **3 lines**, verbatim (leading blank lines skipped). No code detection and no
+  monospace; always the UI font. Tabs render as 4 spaces. Whitespace is
   not collapsed (today's fuzzel label collapses it; that hides structure).
 - Long single line: one line, ellipsis at the end.
 - Overflow indicator at bottom right, muted: `N more lines` when lines were cut, and
   `· N chars` when the preview is longer than 200 chars. Example: `3 more lines · 412 chars`.
-  Needs content length from the store (see 9).
+  Needs content length from the store (see 11).
 - The 400-char preview from the store is enough for display; never load the full blob for
   the list.
 
@@ -119,7 +122,7 @@ principle; for `text/plain` it does the same as `Paste`, which is fine.
 | pending | `Reading text...` | muted, with a small spinner |
 | failed | `Couldn't read text` | muted, warning icon |
 | none (OCR off) | nothing | |
-| pending, but no engine installed | `Reading text...` is wrong here; see 7.3 | |
+| pending, no engine installed | `Waiting for a text engine` | muted; shown with the 7.3 banner |
 
 - A pending row updates in place when OCR finishes. The window subscribes to the socket
   (`ocr done <id>`) rather than polling SQLite; fallback: poll every 500 ms while any
@@ -132,7 +135,7 @@ principle; for `text/plain` it does the same as `Paste`, which is fine.
 Order is `last_used` desc, as now. No grouping by day: a clipboard is used by recency, and
 headings would push the important rows down. Relative time is not shown per row (it is
 rarely the question); it appears in the row's tooltip on hover after 700 ms:
-`Copied 3 min ago`. Needs `last_used` in `Summary` (see 9).
+`Copied 3 min ago`. Needs `last_used` in `Summary` (see 11).
 
 ## 4. Search
 
@@ -156,12 +159,13 @@ list regardless of focus, so there is no tab-switching between search and list.
 | Super+V | Toggle the window (handled by the window when it has focus) |
 | type | Filter |
 | Up / Down | Move selection; wraps at the ends is off (predictable) |
-| Page Up / Page Down, Home / End | Move by a page, or to first/last |
+| Page Up / Page Down | Move by a page |
+| Ctrl+Home / Ctrl+End | First / last row (plain Home and End move the caret in the search field) |
 | Enter | Paste selected entry (close first) |
 | Shift+Enter | Paste as plain text (image: OCR text) |
 | Ctrl+Enter | Copy to clipboard only, no paste, window stays open. For when paste_on_select is unwanted once. |
-| Delete | Delete selected entry; footer shows undo for 6 s |
-| Ctrl+Z | Undo the last delete (while the footer shows it) |
+| Shift+Delete | Delete selected entry; footer shows undo for 6 s (plain Delete edits the search text) |
+| Ctrl+Z | Undo the last delete (while the footer shows it). iced's text input may swallow Ctrl+Z; verify against the libcosmic pin. The footer `Undo` button is the guaranteed path. |
 | Alt+1, Alt+2, Alt+3 | Paste macro 1 to 3 (shown on the buttons) |
 | Ctrl+, | Open settings |
 | Escape | Clear search, or close if search is empty. In settings: back to the list. |
@@ -169,6 +173,10 @@ list regardless of focus, so there is no tab-switching between search and list.
 Selection on open is always the top row, so `Super+V, Enter` re-pastes the current
 clipboard, and `Super+V, Down, Enter` pastes the previous one. That is the Windows habit and
 it must stay a two-key habit.
+
+With `Paste after picking an item` off: Enter, click, and the context menu `Paste` copy the
+entry and close without pasting; the footer hint reads `Enter copy · Shift+Enter copy as text`.
+Macros always paste; inserting text is their only purpose.
 
 Shift+Enter on an image whose OCR is still pending: wait up to 3 s for it, footer shows
 `Reading text...`; on failure show 7.2.
@@ -198,8 +206,8 @@ in the window. Rules:
 ### 7.1 Delete and undo
 
 Footer: `Deleted. Undo (Ctrl+Z)` with `Undo` as a link button. Held 6 s. The entry is
-removed from the DB immediately; undo restores it at its original position (see 9,
-`restore`). No confirmation dialog for single delete.
+removed from the DB immediately; undo restores it at its original position (see 11,
+`deleted_at`). No confirmation dialog for single delete.
 
 ### 7.2 Errors while open
 
@@ -265,7 +273,11 @@ Right column, heading `Paste`. Three by default, top to bottom in order of expec
 - **Not recorded in history.** Mechanism: before copying, the window writes the content hash
   to `$XDG_RUNTIME_DIR/clippo/skip` (one hash per line, entries older than 10 s ignored);
   `ingest` skips a copy whose hash is listed and removes the line. Cross-process, no protocol
-  change, works whether or not `watch` is the parent.
+  change, works whether or not `watch` is the parent. The hash must match what `ingest`
+  computes: `content_hash(TEXT_MIME, bytes)` where bytes are exactly what `wl-paste` will
+  deliver (no trailing newline added; copy with `wl-copy --type text/plain;charset=utf-8`).
+  If that proves fragile, the blunt fallback is a line `skip-next` that makes `ingest` drop
+  the next text copy within 2 s.
 - **Previous clipboard restored** after the paste (default on, setting in 10): after
   `paste::send` returns, wait 300 ms, then `copy_entry` the entry that was on the clipboard
   before (the top history entry, if it matched; otherwise do nothing, since we cannot restore
@@ -284,7 +296,8 @@ per-character keymap construction and does not work in every app.
 Opened by the gear button or Ctrl+,. **Not a separate window**: it replaces the list and
 macro column inside the same layer surface (libcosmic dialogs and secondary windows on a
 layer-shell app are awkward; a page swap is reliable). Header: back arrow + `Settings`, and
-`Reset to defaults` at the right. Escape or the back arrow returns to the list.
+`Reset to defaults` at the right. Escape or the back arrow returns to the list. The search bar is hidden while the page is
+shown. Four sections do not fit in ~440 px, so the page scrolls; sections keep their order.
 
 Sections in order of how often they are touched. Each control shows the current value; the
 default is shown muted in the label's help text where it is not obvious from the control.
@@ -438,7 +451,8 @@ Needed by the design; each is small.
 | Macro button | `14:00` / `2026-09-17` / `2026-09-17 14:00:05` | live values |
 | Macro button, accelerator | `Alt+1` | small |
 | Macro tooltip | `%Y-%m-%d · Change in Settings` | |
-| Footer, hints | `Enter paste · Shift+Enter paste as text · Del delete · Esc close` | |
+| Footer, hints | `Enter paste · Shift+Enter paste as text · Shift+Del delete · Esc close` | |
+| Footer, hints, paste on pick off | `Enter copy · Shift+Enter copy as text · Shift+Del delete · Esc close` | |
 | Footer, after delete | `Deleted. Undo (Ctrl+Z)` | `Undo` is a link button |
 | Footer, waiting for OCR on Shift+Enter | `Reading text...` | |
 | Footer, error | `No text in this image` | |
@@ -455,6 +469,7 @@ Needed by the design; each is small.
 | Notification, paste failed | title `Copied, but couldn't paste` body `<error>. Press Shift+Insert to paste it yourself.` | key name follows config |
 | Notification, copy failed | title `Couldn't copy` body `<error>` | |
 | Settings, header | `Settings` | |
+| Settings, back button tooltip | `Back` | |
 | Settings, header button | `Reset to defaults` | |
 | Settings, reset confirm | `Reset all settings to defaults?` + `Reset` / `Cancel` | |
 | Settings, section | `History` | |
