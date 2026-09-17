@@ -124,7 +124,7 @@ pub fn run(store: &Store, paths: &Paths) -> Result<()> {
 /// Put an entry back on the clipboard with its original type.
 pub fn copy_entry(store: &Store, id: i64) -> Result<()> {
     let (Some(entry), Some(content)) = (store.summary(id)?, store.content(id)?) else {
-        bail!("No entry with id {id}");
+        bail!("no entry with id {id}");
     };
     let mut child = Command::new("wl-copy")
         .args(["--type", &entry.mime])

@@ -49,7 +49,7 @@ pub fn backend(cfg: &OcrConfig, paths: &Paths) -> Result<Option<Box<dyn OcrBacke
 
 pub fn no_engine_error() -> anyhow::Error {
     anyhow!(
-        "No OCR engine available. Run `clippo setup-ocr`, install tesseract-ocr, or check `ocr.engine` in the config."
+        "no OCR engine available. Run `clippo setup-ocr`, install tesseract-ocr, or check `ocr.engine` in the config."
     )
 }
 
@@ -192,7 +192,7 @@ pub fn setup(paths: &Paths) -> Result<()> {
             })?;
         if !status.success() {
             let _ = std::fs::remove_file(&tmp);
-            bail!("Download failed: {url}");
+            bail!("download failed: {url}");
         }
         std::fs::rename(&tmp, &dest)?;
     }
@@ -205,7 +205,7 @@ pub fn ocr_entry(store: &crate::store::Store, backend: &dyn OcrBackend, id: i64)
     use crate::store::OcrStatus;
     let content = store
         .content(id)?
-        .ok_or_else(|| anyhow!("No entry with id {id}"))?;
+        .ok_or_else(|| anyhow!("no entry with id {id}"))?;
     match backend.recognize(&content) {
         Ok(text) => {
             store.set_ocr(id, OcrStatus::Done, Some(&text))?;

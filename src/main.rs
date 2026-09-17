@@ -82,7 +82,7 @@ fn run(cli: Cli) -> Result<()> {
         }
         Cmd::Delete { id } => {
             if !Store::open(&paths.db)?.delete(id)? {
-                return Err(anyhow!("No entry with id {id}"));
+                return Err(anyhow!("no entry with id {id}"));
             }
             thumbs::remove(&paths.thumbs_dir, &[id]);
             println!("Deleted entry {id}");
@@ -115,7 +115,7 @@ fn get(cfg: &Config, paths: &Paths, id: i64, plain: bool) -> Result<()> {
     let store = Store::open(&paths.db)?;
     let entry = store
         .summary(id)?
-        .ok_or_else(|| anyhow!("No entry with id {id}"))?;
+        .ok_or_else(|| anyhow!("no entry with id {id}"))?;
     let mut out = std::io::stdout().lock();
     if plain && entry.is_image() {
         let text = match (entry.ocr_status, entry.ocr_text) {
@@ -129,7 +129,7 @@ fn get(cfg: &Config, paths: &Paths, id: i64, plain: bool) -> Result<()> {
     } else {
         let content = store
             .content(id)?
-            .ok_or_else(|| anyhow!("No entry with id {id}"))?;
+            .ok_or_else(|| anyhow!("no entry with id {id}"))?;
         out.write_all(&content)?;
     }
     Ok(())
