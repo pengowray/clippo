@@ -602,6 +602,16 @@ untouched, `a_b_c` untouched, a link inside bold, a table with a separator.
   constant and test.
 - **Per-row hover reveal**: `mouse_area` per row plus a `hovered: Option<usize>` in state.
   Fine, just per-row wiring.
+- **Opening time**: measured in a release build, the first frame is on screen ~30 ms after
+  the socket message (~70 ms on the first open after the service starts, while fonts and
+  shaders warm up); `clippo window` itself (exec plus the socket round trip) is under 10 ms.
+  Nothing blocking runs on the UI thread before the surface maps: the list is re-read
+  right after mapping (SQLite, 1 to 3 ms), and the clipboard comparison for
+  `ON CLIPBOARD NOW`, the `status` request for the banners and thumbnail generation all
+  run off-thread and update the view when they finish. Rows are built in chunks of 40 (the
+  first frame costs about 0.2 ms per row), with a placeholder for the rest that is filled
+  in as the selection or scroll position reaches it. The time per open is written to
+  `clippo.log`.
 - **Images**: `cosmic::widget::image` with `image::Handle::from_path` for thumbnails; cache
   handles per id so scrolling does not re-decode.
 - **Settings inside the surface**: page swap, not `cosmic::dialog` or a second window.
