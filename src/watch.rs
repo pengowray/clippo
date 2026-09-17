@@ -1,12 +1,14 @@
 use std::os::unix::process::CommandExt;
 use std::process::Command;
+use std::sync::{Arc, RwLock};
 use std::thread;
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 
-use crate::config::{Config, Paths};
+use crate::config::{Config, OcrConfig, Paths};
 use crate::ocr::{self, OcrBackend};
+use crate::service::{self, Shared};
 use crate::store::Store;
 use crate::thumbs;
 
@@ -29,11 +31,15 @@ pub fn run(cfg: &Config, paths: &Paths) -> Result<()> {
     }
     let mut child = cmd.spawn().context("could not run wl-paste")?;
 
-    let (cfg, paths) = (cfg.clone(), paths.clone());
+    let shared = Arc::new(Shared {
+        cfg: RwLock::new(cfg.clone()),
+        paths: paths.clone(),
+    });
     let (wake_ocr, wakeups) = std::sync::mpsc::channel();
-    thread::spawn(move || ocr_worker(&cfg, &paths, &wakeups));
+    let worker_shared = Arc::clone(&shared);
+    thread::spawn(move || ocr_worker(&worker_shared, &wakeups));
     thread::spawn(move || {
-        if let Err(e) = crate::paste::serve(wake_ocr) {
+        if let Err(e) = service::serve(shared, wake_ocr) {
             eprintln!("clippo: {e:#}");
         }
     });
@@ -42,18 +48,29 @@ pub fn run(cfg: &Config, paths: &Paths) -> Result<()> {
     bail!("clipboard watching stopped: wl-paste exited ({status})");
 }
 
-fn ocr_worker(cfg: &Config, paths: &Paths, wakeups: &std::sync::mpsc::Receiver<()>) {
-    let store = match Store::open(&paths.db) {
+/// The OCR engine, plus the settings it was built from so a `reload` can replace it.
+struct Engine {
+    backend: Box<dyn OcrBackend>,
+    cfg: OcrConfig,
+}
+
+fn ocr_worker(shared: &Shared, wakeups: &std::sync::mpsc::Receiver<()>) {
+    let store = match Store::open(&shared.paths.db) {
         Ok(s) => s,
         Err(e) => {
             eprintln!("clippo: OCR worker stopped: {e:#}");
             return;
         }
     };
-    let mut backend: Option<Box<dyn OcrBackend>> = None;
+    let mut engine: Option<Engine> = None;
     let mut reported_missing = false;
     loop {
-        if let Err(e) = ocr_step(cfg, paths, &store, &mut backend, &mut reported_missing) {
+        let cfg = shared.config();
+        if engine.as_ref().is_some_and(|e| e.cfg != cfg.ocr) {
+            engine = None;
+            reported_missing = false;
+        }
+        if let Err(e) = ocr_step(&cfg, &shared.paths, &store, &mut engine, &mut reported_missing) {
             eprintln!("clippo: {e:#}");
         }
         // Ingest wakes us as soon as an image arrives; the poll catches anything missed.
@@ -66,16 +83,19 @@ fn ocr_step(
     cfg: &Config,
     paths: &Paths,
     store: &Store,
-    backend: &mut Option<Box<dyn OcrBackend>>,
+    engine: &mut Option<Engine>,
     reported_missing: &mut bool,
 ) -> Result<()> {
     while let Some(id) = store.next_pending_ocr()? {
-        if backend.is_none() {
+        if engine.is_none() {
             // Engines can appear later (setup-ocr, installing tesseract), so keep checking.
             match ocr::backend(&cfg.ocr, paths) {
                 Ok(Some(b)) => {
                     eprintln!("clippo: OCR engine: {}", b.name());
-                    *backend = Some(b);
+                    *engine = Some(Engine {
+                        backend: b,
+                        cfg: cfg.ocr.clone(),
+                    });
                 }
                 Ok(None) | Err(_) if *reported_missing => return Ok(()),
                 Ok(None) => {
@@ -89,7 +109,7 @@ fn ocr_step(
                 }
             }
         }
-        let b = backend.as_deref().expect("backend set above");
+        let b = engine.as_ref().map(|e| e.backend.as_ref()).expect("engine set above");
         if let Some(content) = store.content(id)? {
             let _ = thumbs::ensure(&paths.thumbs_dir, id, &content);
         }

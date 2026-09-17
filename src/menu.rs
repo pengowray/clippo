@@ -1,9 +1,9 @@
 use std::io::Write;
 use std::process::{Command, Stdio};
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 
-use crate::clipboard;
+use crate::clipboard::{self, CopyMode};
 use crate::config::{Config, Paths};
 use crate::paste;
 use crate::store::{Store, Summary};
@@ -120,19 +120,11 @@ pub fn run(cfg: &Config, store: &Store, paths: &Paths) -> Result<()> {
     let Some(id) = parse_selection(selected.trim_end_matches('\n')) else {
         return Ok(());
     };
-    copy_entry(store, id)?;
+    clipboard::copy_entry(paths, store, id, CopyMode::Full)?;
     if cfg.paste.paste_on_select {
-        paste::send(&cfg.paste, true)?;
+        paste::send(paths, &cfg.paste, true)?;
     }
     Ok(())
-}
-
-/// Put an entry back on the clipboard with its original type.
-pub fn copy_entry(store: &Store, id: i64) -> Result<()> {
-    let (Some(entry), Some(content)) = (store.summary(id)?, store.content(id)?) else {
-        bail!("no entry with id {id}");
-    };
-    clipboard::copy(Some(&entry.mime), &content)
 }
 
 #[cfg(test)]

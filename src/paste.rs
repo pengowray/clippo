@@ -1,22 +1,21 @@
-//! Auto-paste: press the paste keys through a virtual uinput keyboard.
+//! Auto-paste: press the paste keys through a virtual keyboard.
 //!
-//! A new virtual keyboard takes the compositor a noticeable moment to start listening to, so
-//! `clippo watch` keeps one open and serves paste requests over a Unix socket. Without the
-//! service, a keyboard is created on the spot and clippo waits for it to settle.
+//! The Wayland virtual keyboard (`vkbd.rs`) is the default. The uinput fallback takes the
+//! compositor a noticeable moment to start listening to a new device, so `clippo watch` keeps
+//! one open and serves paste requests over its socket (`service.rs`). Without the service, a
+//! keyboard is created on the spot and clippo waits for it to settle.
 
-use std::io::{BufRead, BufReader, Write};
-use std::os::unix::net::{UnixListener, UnixStream};
-use std::path::PathBuf;
 use std::thread::sleep;
 use std::time::Duration;
 
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Context, Result};
 use evdev::{AttributeSet, EventType, InputEvent, KeyCode, uinput::VirtualDevice};
 
-use crate::config::{PasteConfig, PasteKeys, PasteMethod};
+use crate::config::{PasteConfig, PasteKeys, PasteMethod, Paths};
+use crate::service;
 
 /// How long a freshly created keyboard needs before the compositor reads its keys.
-const NEW_DEVICE_SETTLE: Duration = Duration::from_millis(800);
+pub const NEW_DEVICE_SETTLE: Duration = Duration::from_millis(800);
 
 const MODIFIERS: [KeyCode; 4] = [
     KeyCode::KEY_LEFTMETA,
@@ -79,22 +78,17 @@ impl Keyboard {
     }
 }
 
-fn socket_path() -> PathBuf {
-    std::env::var_os("XDG_RUNTIME_DIR")
-        .map_or_else(std::env::temp_dir, PathBuf::from)
-        .join("clippo.sock")
-}
-
-fn encode(cfg: &PasteConfig) -> String {
+/// The socket request for a uinput paste with these settings.
+pub fn encode(cfg: &PasteConfig) -> String {
     let keys = match cfg.keys {
         PasteKeys::ShiftInsert => "shift-insert",
         PasteKeys::CtrlV => "ctrl-v",
         PasteKeys::CtrlShiftV => "ctrl-shift-v",
     };
-    format!("paste {keys} {} {}\n", cfg.delay_ms, cfg.release_modifiers as u8)
+    format!("paste {keys} {} {}", cfg.delay_ms, cfg.release_modifiers as u8)
 }
 
-fn decode(line: &str) -> Option<PasteConfig> {
+pub fn decode(line: &str) -> Option<PasteConfig> {
     let mut parts = line.split_whitespace();
     if parts.next()? != "paste" {
         return None;
@@ -117,7 +111,7 @@ fn decode(line: &str) -> Option<PasteConfig> {
 const AFTER_MENU_WAIT: Duration = Duration::from_millis(50);
 
 /// Press the paste keys with the configured method.
-pub fn send(cfg: &PasteConfig, after_menu: bool) -> Result<()> {
+pub fn send(paths: &Paths, cfg: &PasteConfig, after_menu: bool) -> Result<()> {
     if cfg.method != PasteMethod::Uinput {
         // Held shortcut keys don't affect the virtual keyboard, so `delay_ms` isn't needed here.
         if after_menu {
@@ -126,18 +120,20 @@ pub fn send(cfg: &PasteConfig, after_menu: bool) -> Result<()> {
         match crate::vkbd::paste(cfg.keys) {
             Ok(()) => return Ok(()),
             Err(e) if cfg.method == PasteMethod::Wayland => return Err(e),
-            Err(e) => crate::log(&format!("paste: Wayland virtual keyboard failed ({e:#}), trying uinput")),
+            Err(e) => crate::log(&format!(
+                "paste: Wayland virtual keyboard failed ({e:#}), trying uinput"
+            )),
         }
     }
-    send_uinput(cfg)
+    send_uinput(paths, cfg)
 }
 
 /// Press the paste keys through uinput, using the running `clippo watch`'s keyboard if there is one.
-fn send_uinput(cfg: &PasteConfig) -> Result<()> {
-    match send_via_service(cfg) {
+fn send_uinput(paths: &Paths, cfg: &PasteConfig) -> Result<()> {
+    match service::paste(paths, cfg) {
         Ok(()) => Ok(()),
-        Err(e) => {
-            crate::log(&format!("paste: service unavailable ({e:#}), using a new keyboard"));
+        Err(e) if e.is::<service::Unavailable>() => {
+            crate::log(&format!("paste: {e:#}, using a new keyboard"));
             let mut kb = Keyboard::new()?;
             sleep(NEW_DEVICE_SETTLE.saturating_sub(Duration::from_millis(cfg.delay_ms)));
             kb.paste(cfg)?;
@@ -145,67 +141,8 @@ fn send_uinput(cfg: &PasteConfig) -> Result<()> {
             sleep(Duration::from_millis(50));
             Ok(())
         }
+        Err(e) => Err(e.context("paste failed")),
     }
-}
-
-fn send_via_service(cfg: &PasteConfig) -> Result<()> {
-    let mut stream = UnixStream::connect(socket_path())?;
-    stream.set_read_timeout(Some(Duration::from_secs(5)))?;
-    stream.write_all(encode(cfg).as_bytes())?;
-    let mut reply = String::new();
-    BufReader::new(stream).read_line(&mut reply)?;
-    match reply.trim() {
-        "ok" => Ok(()),
-        other => bail!("paste failed: {other}"),
-    }
-}
-
-/// Tell the running `clippo watch` there is a new image to OCR. Does nothing if it isn't running.
-pub fn notify_ocr() {
-    if let Ok(mut stream) = UnixStream::connect(socket_path()) {
-        let _ = stream.write_all(b"ocr\n");
-    }
-}
-
-/// Serve requests from other clippo commands: `ocr` wakes the OCR worker, `paste ...` presses
-/// the paste keys through uinput. Runs until the process exits.
-pub fn serve(wake_ocr: std::sync::mpsc::Sender<()>) -> Result<()> {
-    // Only created when a uinput paste is first requested.
-    let mut kb: Option<Keyboard> = None;
-    let path = socket_path();
-    let _ = std::fs::remove_file(&path);
-    let listener = UnixListener::bind(&path)
-        .with_context(|| format!("could not listen on {}", path.display()))?;
-    for stream in listener.incoming() {
-        let Ok(stream) = stream else { continue };
-        let mut line = String::new();
-        let mut reader = BufReader::new(&stream);
-        let reply = match reader.read_line(&mut line) {
-            Ok(_) if line.trim() == "ocr" => {
-                let _ = wake_ocr.send(());
-                "ok".to_string()
-            }
-            Ok(_) => match decode(&line) {
-                Some(cfg) => {
-                    let result = match &mut kb {
-                        Some(kb) => kb.paste(&cfg),
-                        None => Keyboard::new().and_then(|mut new| {
-                            // A new keyboard needs time before the compositor reads it.
-                            sleep(NEW_DEVICE_SETTLE);
-                            let r = new.paste(&cfg);
-                            kb = Some(new);
-                            r
-                        }),
-                    };
-                    result.map_or_else(|e| format!("{e:#}"), |()| "ok".into())
-                }
-                None => "bad request".into(),
-            },
-            Err(e) => e.to_string(),
-        };
-        let _ = (&stream).write_all(format!("{reply}\n").as_bytes());
-    }
-    Err(anyhow!("clippo socket closed"))
 }
 
 #[cfg(test)]
