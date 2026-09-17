@@ -192,7 +192,7 @@ pub fn setup(paths: &Paths) -> Result<()> {
             })?;
         if !status.success() {
             let _ = std::fs::remove_file(&tmp);
-            bail!("download failed: {url}");
+            bail!("Download failed: {url}");
         }
         std::fs::rename(&tmp, &dest)?;
     }

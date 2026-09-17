@@ -33,7 +33,7 @@ pub fn run(cfg: &Config, paths: &Paths) -> Result<()> {
     thread::spawn(move || ocr_worker(&cfg, &paths));
 
     let status = child.wait()?;
-    bail!("wl-paste exited ({status})");
+    bail!("clipboard watching stopped: wl-paste exited ({status})");
 }
 
 fn ocr_worker(cfg: &Config, paths: &Paths) {
@@ -67,7 +67,7 @@ fn ocr_step(
             // Engines can appear later (setup-ocr, installing tesseract), so keep checking.
             match ocr::backend(&cfg.ocr, paths) {
                 Ok(Some(b)) => {
-                    eprintln!("clippo: using {} for OCR", b.name());
+                    eprintln!("clippo: OCR engine: {}", b.name());
                     *backend = Some(b);
                 }
                 Ok(None) | Err(_) if *reported_missing => return Ok(()),

@@ -91,7 +91,7 @@ fn run(cli: Cli) -> Result<()> {
         Cmd::Clear => {
             let n = Store::open(&paths.db)?.clear()?;
             thumbs::remove_all(&paths.thumbs_dir);
-            println!("Deleted {n} entries");
+            println!("Deleted {n} {}", if n == 1 { "entry" } else { "entries" });
             Ok(())
         }
         Cmd::Ocr { file } => {
