@@ -138,11 +138,20 @@ pub fn view<'a>(
     }
 
     let entries = items.iter().filter(|i| matches!(i, Item::Entry(_))).count();
-    if entries == 0 {
+    // Before the first list read the column is simply blank, not "Nothing copied yet".
+    if entries == 0 && app.loaded() {
         col = col.push(empty_state(app, items));
     }
 
+    let limit = app.render_limit();
     for (pos, item) in items.iter().enumerate() {
+        if pos >= limit {
+            // Not built yet: stand in with the height the rest would take, so the
+            // scrollbar keeps its proportion and scrolling into it builds the next chunk.
+            let rest: f32 = items[pos..].iter().map(|i| estimated_height(i, rows)).sum();
+            col = col.push(widget::Space::new().height(rest));
+            break;
+        }
         let is_selected = pos == selected;
         let is_hovered = hovered == Some(pos);
         let el: Element<'a, Message> = match *item {
@@ -162,9 +171,25 @@ pub fn view<'a>(
 
     widget::scrollable(col)
         .id(crate::ui::app::SCROLL_ID.clone())
+        .on_scroll(|vp| Message::Scrolled(vp.relative_offset().y))
         .height(Length::Fill)
         .width(Length::Fill)
         .into()
+}
+
+/// Rough height of an item that is not built yet, separator included.
+fn estimated_height(item: &Item, rows: &[Row]) -> f32 {
+    const LINE: f32 = 21.0;
+    match *item {
+        Item::Entry(i) => match &rows[i].kind {
+            Kind::Text { lines, .. } => {
+                let hint = if rows[i].overflow_hint().is_some() { 17.0 } else { 0.0 };
+                17.0 + LINE * lines.len().max(1) as f32 + hint
+            }
+            Kind::Image { .. } => THUMB_SIZE + 17.0,
+        },
+        Item::OlderFold | Item::Divider => 37.0,
+    }
 }
 
 fn empty_state<'a>(app: &'a App, items: &[Item]) -> Element<'a, Message> {
@@ -414,17 +439,60 @@ fn action_button<'a>(
     tooltip(b, text::caption(tip), tooltip::Position::Bottom).into()
 }
 
+/// Opacity of a greyed button's glyph; the theme's disabled foreground is too close to
+/// the enabled one to read at 28 px.
+const DISABLED_ALPHA: f32 = 0.35;
+
+fn disabled_text(t: &Theme) -> TextStyle {
+    TextStyle {
+        color: Some(with_alpha(t.cosmic().on_bg_color(), DISABLED_ALPHA)),
+        ..Default::default()
+    }
+}
+
+/// `txt` glyph, dimmed when the button is greyed.
+fn plain_glyph<'a>(enabled: bool) -> Element<'a, Message> {
+    let t = text("txt").size(11);
+    if enabled {
+        t.into()
+    } else {
+        t.class(theme::Text::Custom(disabled_text)).into()
+    }
+}
+
 /// `F` in bold italic underline: the "formatted" glyph.
-fn formatted_glyph<'a>() -> Element<'a, Message> {
+fn formatted_glyph<'a>(enabled: bool) -> Element<'a, Message> {
     let font = cosmic::font::Font {
         weight: cosmic::iced::font::Weight::Bold,
         style: cosmic::iced::font::Style::Italic,
         ..cosmic::font::default()
     };
-    cosmic::iced::widget::rich_text::<'a, (), Message, Theme, cosmic::Renderer>(vec![
-        cosmic::iced::widget::span("F").font(font).underline(true).size(14),
-    ])
-    .into()
+    let mut span = cosmic::iced::widget::span("F").font(font).underline(true).size(14);
+    if !enabled {
+        span = span.color(with_alpha(theme::active().cosmic().on_bg_color(), DISABLED_ALPHA));
+    }
+    cosmic::iced::widget::rich_text::<'a, (), Message, Theme, cosmic::Renderer>(vec![span])
+        .into()
+}
+
+/// Symbolic image icon, dimmed when the button is greyed.
+fn image_glyph<'a>(enabled: bool) -> Element<'a, Message> {
+    let icon = widget::icon::from_name("image-x-generic-symbolic").size(16);
+    if enabled {
+        return icon.into();
+    }
+    match icon.icon().into_svg_handle() {
+        Some(handle) => widget::svg(handle)
+            .width(16)
+            .height(16)
+            .class(theme::Svg::Custom(std::rc::Rc::new(|t| {
+                cosmic::iced::widget::svg::Style {
+                    color: Some(with_alpha(t.cosmic().on_bg_color(), DISABLED_ALPHA)),
+                }
+            })))
+            .into(),
+        None => widget::Space::new().width(16).height(16).into(),
+    }
 }
 
 /// The three paste buttons at the left of every row, in a fixed column so they line up:
@@ -454,15 +522,9 @@ fn paste_buttons<'a>(idx: usize, r: &'a Row) -> Element<'a, Message> {
         (strings::NOT_AN_IMAGE.to_string(), None)
     };
     row![
-        action_button(text("txt").size(11).into(), plain_tip, plain_on),
-        action_button(formatted_glyph(), fmt_tip, fmt_on),
-        action_button(
-            widget::icon::from_name("image-x-generic-symbolic")
-                .size(16)
-                .into(),
-            img_tip,
-            img_on,
-        ),
+        action_button(plain_glyph(plain_on.is_some()), plain_tip, plain_on),
+        action_button(formatted_glyph(fmt_on.is_some()), fmt_tip, fmt_on),
+        action_button(image_glyph(img_on.is_some()), img_tip, img_on),
     ]
     .spacing(2)
     .align_y(Alignment::Center)

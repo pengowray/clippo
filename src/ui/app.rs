@@ -51,6 +51,11 @@ const OCR_WAIT: Duration = Duration::from_secs(3);
 const OCR_POLL: Duration = Duration::from_millis(500);
 /// Focus loss this soon after mapping is the compositor settling, not a click elsewhere.
 const FOCUS_GRACE: Duration = Duration::from_millis(300);
+/// Rows built into the widget tree at once. The first frame costs ~0.2 ms per row in a
+/// release build, so a 1000-entry history is laid out in chunks as the user reaches them.
+const RENDER_CHUNK: usize = 40;
+/// Extend the rendered range when the selection comes this close to its end.
+const RENDER_MARGIN: usize = 8;
 
 pub static SEARCH_ID: std::sync::LazyLock<widget::Id> =
     std::sync::LazyLock::new(|| widget::Id::new("clippo-search"));
@@ -155,7 +160,15 @@ pub enum Message {
     Undo,
     Tick,
     Reload,
-    ThumbReady(i64, Option<PathBuf>),
+    ThumbsReady(Vec<(i64, PathBuf)>),
+    /// Reload the list and banner state right after mapping.
+    Refresh,
+    ClipboardNow(bool),
+    Status(bool, bool),
+    /// A frame is about to be drawn; used only to time the first one after a show.
+    Redraw,
+    /// The list scrolled to this relative offset (0 top, 1 bottom).
+    Scrolled(f32),
     OcrWaited(i64, bool),
     /// `menu toggle` from the service (resident mode).
     Toggle,
@@ -192,6 +205,15 @@ pub struct App {
     toggles: Option<ToggleSource>,
     mapped: bool,
     shown_at: Instant,
+    /// Set by `show`; the first frame after it logs how long opening took.
+    redraw_probe: Option<Instant>,
+    /// How long the first `view` after a show took to build (`view` takes `&self`).
+    view_ms: std::cell::Cell<u128>,
+    render_limit: usize,
+    /// How long the last `store.list()` took, for the open-time log line.
+    list_ms: u128,
+    /// The first list read has completed; before that the empty state would be a lie.
+    loaded: bool,
     pub settings: crate::ui::settings::State,
 }
 
@@ -285,7 +307,15 @@ impl App {
             target = next;
         }
         self.selected = target as usize;
+        if self.selected + RENDER_MARGIN >= self.render_limit {
+            self.render_limit = self.selected + RENDER_CHUNK;
+        }
         self.scroll_to_selection()
+    }
+
+    /// How many list items are built into the widget tree; the rest is a placeholder.
+    pub fn render_limit(&self) -> usize {
+        self.render_limit
     }
 
     fn scroll_to_selection(&self) -> Task<Message> {
@@ -314,17 +344,31 @@ impl App {
 
     // ---- data -------------------------------------------------------------------------
 
+    /// Re-read the list. Only the SQLite read happens here; the clipboard comparison and
+    /// thumbnail generation spawn processes or decode images, so they run off-thread.
     fn reload(&mut self) -> Task<Message> {
         let Some(store) = &self.store else {
             return Task::none();
         };
+        let started = Instant::now();
         match store.list() {
             Ok(list) => {
                 self.rows = list.iter().map(Row::from_summary).collect();
+                self.loaded = true;
                 self.load_error = None;
-                self.top_is_clipboard = self.check_clipboard_now();
                 self.clamp_selection();
-                self.request_thumbs()
+                self.list_ms = started.elapsed().as_millis();
+                let top = self.rows.first().map(|r| (r.id, r.mime.clone()));
+                let db = self.paths.db.clone();
+                let clipboard = iced::Task::future(async move {
+                    tokio::task::spawn_blocking(move || {
+                        top.is_some_and(|(id, mime)| clipboard_holds(&db, id, &mime))
+                    })
+                    .await
+                    .unwrap_or(false)
+                })
+                .map(|b| cosmic::Action::App(Message::ClipboardNow(b)));
+                Task::batch([clipboard, self.request_thumbs()])
             }
             Err(e) => {
                 self.load_error = Some(format!("{e:#}"));
@@ -337,45 +381,10 @@ impl App {
         }
     }
 
-    /// Does the live clipboard hold the top entry? One `wl-paste` spawn (design 8.1).
-    fn check_clipboard_now(&self) -> bool {
-        let (Some(store), Some(top)) = (&self.store, self.rows.first()) else {
-            return false;
-        };
-        let types = clipboard::list_types();
-        let types: Vec<&str> = types.iter().map(String::as_str).collect();
-        let data = if top.is_image() {
-            crate::ingest::preferred_image_type(&types)
-                .and_then(|t| clipboard::paste(&["--no-newline", "--type", &t]))
-        } else if types
-            .iter()
-            .any(|t| t.starts_with("text/plain") || *t == "UTF8_STRING")
-        {
-            clipboard::paste(&["--type", "text"])
-        } else {
-            None
-        };
-        let Some(data) = data else { return false };
-        // `ingest` stored whatever `wl-paste --watch` piped, which may or may not have had a
-        // trailing newline, so try both shapes.
-        let mut candidates = vec![data.clone()];
-        if data.last() == Some(&b'\n') {
-            candidates.push(data[..data.len() - 1].to_vec());
-        } else {
-            let mut with = data.clone();
-            with.push(b'\n');
-            candidates.push(with);
-        }
-        candidates
-            .iter()
-            .any(|c| matches!(store.find(&top.mime, c), Ok(Some(s)) if s.id == top.id))
-    }
-
+    /// Cached thumbnails are picked up by path (decoded lazily by the renderer, and the
+    /// handles live across opens); missing ones are generated in one background task.
     fn request_thumbs(&mut self) -> Task<Message> {
-        let Some(store) = &self.store else {
-            return Task::none();
-        };
-        let mut tasks = Vec::new();
+        let mut missing = Vec::new();
         for r in self.rows.iter().filter(|r| r.is_image()) {
             if self.thumbs.contains_key(&r.id) {
                 continue;
@@ -384,24 +393,44 @@ impl App {
             if path.is_file() {
                 self.thumbs
                     .insert(r.id, widget::image::Handle::from_path(path));
-                continue;
+            } else {
+                missing.push(r.id);
             }
-            let Ok(Some(content)) = store.content(r.id) else {
-                continue;
-            };
-            let dir = self.paths.thumbs_dir.clone();
-            let id = r.id;
-            tasks.push(
-                iced::Task::future(async move {
-                    tokio::task::spawn_blocking(move || thumbs::ensure(&dir, id, &content).ok())
-                        .await
-                        .ok()
-                        .flatten()
-                })
-                .map(move |p| cosmic::Action::App(Message::ThumbReady(id, p))),
-            );
         }
-        Task::batch(tasks)
+        if missing.is_empty() {
+            return Task::none();
+        }
+        let db = self.paths.db.clone();
+        let dir = self.paths.thumbs_dir.clone();
+        iced::Task::future(async move {
+            tokio::task::spawn_blocking(move || {
+                let Ok(store) = Store::open(&db) else {
+                    return Vec::new();
+                };
+                missing
+                    .into_iter()
+                    .filter_map(|id| {
+                        let content = store.content(id).ok()??;
+                        thumbs::ensure(&dir, id, &content).ok().map(|p| (id, p))
+                    })
+                    .collect()
+            })
+            .await
+            .unwrap_or_default()
+        })
+        .map(|v| cosmic::Action::App(Message::ThumbsReady(v)))
+    }
+
+    /// Banner state, fetched off-thread so opening never waits on the socket.
+    fn request_status(&self) -> Task<Message> {
+        let cfg = self.cfg.clone();
+        let paths = self.paths.clone();
+        iced::Task::future(async move {
+            tokio::task::spawn_blocking(move || service_status(&cfg, &paths))
+                .await
+                .unwrap_or((false, false))
+        })
+        .map(|(running, missing)| cosmic::Action::App(Message::Status(running, missing)))
     }
 
     fn set_footer(&mut self, f: Footer) {
@@ -434,16 +463,16 @@ impl App {
         self.footer = None;
         self.deleted = None;
         self.page = Page::List;
+        self.redraw_probe = Some(Instant::now());
+        self.render_limit = RENDER_CHUNK;
         if self.resident() {
             // The service may have reloaded the config since the last open.
             if let Ok(cfg) = Config::load(&self.paths) {
                 self.cfg = cfg;
             }
-            let (running, missing) = service_status(&self.cfg, &self.paths);
-            self.service_running = running;
-            self.ocr_engine_missing = missing;
         }
-        let load = self.reload();
+        // Map first with the list from the last open; `Refresh` replaces it a moment later.
+        let load = cosmic::task::message(cosmic::Action::App(Message::Refresh));
         let surface = self.surface;
         let show = cosmic::surface::surface_task(simple_layer_shell::<Message>(
             LiveSettings::default,
@@ -796,6 +825,10 @@ impl App {
             .into()
     }
 
+    pub fn loaded(&self) -> bool {
+        self.loaded
+    }
+
     pub fn is_top_clipboard(&self) -> bool {
         self.top_is_clipboard && !self.searching()
     }
@@ -864,6 +897,41 @@ fn wait_for_ocr(db: &std::path::Path, id: i64) -> bool {
     }
 }
 
+/// Does the live clipboard hold entry `id`? Two `wl-paste` spawns, so never on the UI
+/// thread (design 8.1).
+fn clipboard_holds(db: &std::path::Path, id: i64, mime: &str) -> bool {
+    let Ok(store) = Store::open(db) else {
+        return false;
+    };
+    let types = clipboard::list_types();
+    let types: Vec<&str> = types.iter().map(String::as_str).collect();
+    let data = if mime.starts_with("image/") {
+        crate::ingest::preferred_image_type(&types)
+            .and_then(|t| clipboard::paste(&["--no-newline", "--type", &t]))
+    } else if types
+        .iter()
+        .any(|t| t.starts_with("text/plain") || *t == "UTF8_STRING")
+    {
+        clipboard::paste(&["--type", "text"])
+    } else {
+        None
+    };
+    let Some(data) = data else { return false };
+    // `ingest` stored whatever `wl-paste --watch` piped, which may or may not have had a
+    // trailing newline, so try both shapes.
+    let mut candidates = vec![data.clone()];
+    if data.last() == Some(&b'\n') {
+        candidates.push(data[..data.len() - 1].to_vec());
+    } else {
+        let mut with = data.clone();
+        with.push(b'\n');
+        candidates.push(with);
+    }
+    candidates
+        .iter()
+        .any(|c| matches!(store.find(mime, c), Ok(Some(s)) if s.id == id))
+}
+
 /// (service running, OCR on but no engine) for the banners (design 7.3).
 fn service_status(cfg: &Config, paths: &Paths) -> (bool, bool) {
     match service::status(paths) {
@@ -874,6 +942,7 @@ fn service_status(cfg: &Config, paths: &Paths) -> (bool, bool) {
 
 fn map_event(e: iced::Event, status: Status, _id: window::Id) -> Option<Message> {
     match e {
+        iced::Event::Window(iced::window::Event::RedrawRequested(_)) => Some(Message::Redraw),
         iced::Event::Keyboard(iced::keyboard::Event::KeyPressed { key, modifiers, .. }) => {
             Some(Message::Key(key, modifiers, status))
         }
@@ -909,11 +978,8 @@ impl cosmic::Application for App {
             Err(e) => (None, Some(format!("{e:#}"))),
         };
         let resident = flags.toggles.is_some();
-        let (service_running, ocr_engine_missing) = if resident {
-            (true, false)
-        } else {
-            service_status(&flags.cfg, &flags.paths)
-        };
+        // Banner state arrives asynchronously (`Message::Status`) once the window is up.
+        let (service_running, ocr_engine_missing) = (true, false);
         let settings = crate::ui::settings::State::new(&flags.cfg, &flags.paths, 0);
         let mut app = App {
             core,
@@ -945,6 +1011,11 @@ impl cosmic::Application for App {
                 .map(|rx| ToggleSource(Arc::new(Mutex::new(Some(rx))))),
             mapped: false,
             shown_at: Instant::now(),
+            redraw_probe: None,
+            view_ms: std::cell::Cell::new(0),
+            render_limit: RENDER_CHUNK,
+            list_ms: 0,
+            loaded: false,
             settings,
         };
         // Resident: stay hidden until the first `menu toggle`.
@@ -955,17 +1026,19 @@ impl cosmic::Application for App {
     fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::Key(key, mods, status) => self.on_key(key, mods, status),
-            Message::Layer(LayerEvent::Focused, id) if id == self.surface => Task::batch([
-                text_input::focus(SEARCH_ID.clone()),
-                // A reused scrollable can keep an old offset; every open starts at the top.
-                snap_to(
-                    SCROLL_ID.clone(),
-                    RelativeOffset {
-                        x: None,
-                        y: Some(0.0),
-                    },
-                ),
-            ]),
+            Message::Layer(LayerEvent::Focused, id) if id == self.surface => {
+                Task::batch([
+                    text_input::focus(SEARCH_ID.clone()),
+                    // A reused scrollable can keep an old offset; every open starts at the top.
+                    snap_to(
+                        SCROLL_ID.clone(),
+                        RelativeOffset {
+                            x: None,
+                            y: Some(0.0),
+                        },
+                    ),
+                ])
+            }
             // Clicking another surface takes keyboard focus away: close (design 6). The
             // grace period skips any focus churn while the surface is still mapping.
             Message::Layer(LayerEvent::Unfocused, id)
@@ -980,7 +1053,15 @@ impl cosmic::Application for App {
             Message::Query(q) => {
                 self.query = q;
                 self.selected = 0;
+                self.render_limit = RENDER_CHUNK;
                 self.scroll_to_selection()
+            }
+            Message::Scrolled(y) => {
+                // Past 60% of the scrollable (placeholder included): build the next chunk.
+                if y > 0.6 && self.render_limit < self.items().len() {
+                    self.render_limit += RENDER_CHUNK;
+                }
+                Task::none()
             }
             Message::ClearSearch => {
                 self.query.clear();
@@ -1020,12 +1101,36 @@ impl cosmic::Application for App {
                 Task::none()
             }
             Message::Reload => self.reload(),
-            Message::ThumbReady(id, Some(path)) => {
-                self.thumbs
-                    .insert(id, widget::image::Handle::from_path(path));
+            Message::Refresh => Task::batch([self.reload(), self.request_status()]),
+            Message::Redraw => {
+                if let Some(t) = self.redraw_probe.take() {
+                    crate::log(&format!(
+                        "window: first frame {} ms after show (list read {} ms, view built {} ms, {} of {} rows)",
+                        t.elapsed().as_millis(),
+                        self.list_ms,
+                        self.view_ms.get(),
+                        self.render_limit.min(self.items().len()),
+                        self.rows.len()
+                    ));
+                }
                 Task::none()
             }
-            Message::ThumbReady(_, None) => Task::none(),
+            Message::ClipboardNow(b) => {
+                self.top_is_clipboard = b;
+                Task::none()
+            }
+            Message::Status(running, missing) => {
+                self.service_running = running;
+                self.ocr_engine_missing = missing;
+                Task::none()
+            }
+            Message::ThumbsReady(list) => {
+                for (id, path) in list {
+                    self.thumbs
+                        .insert(id, widget::image::Handle::from_path(path));
+                }
+                Task::none()
+            }
             Message::OcrWaited(id, ok) => {
                 if self.closing {
                     return Task::none();
@@ -1104,6 +1209,7 @@ impl cosmic::Application for App {
         if id != self.surface {
             return widget::space::horizontal().into();
         }
+        let build = Instant::now();
         let page: Element<'_, Message> = match self.page {
             Page::List => self.view_list(),
             Page::Settings => column![
@@ -1112,6 +1218,9 @@ impl cosmic::Application for App {
             ]
             .into(),
         };
+        if self.redraw_probe.is_some() {
+            self.view_ms.set(build.elapsed().as_millis());
+        }
         container(page)
             .width(Length::Fill)
             .height(Length::Fill)
