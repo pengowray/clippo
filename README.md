@@ -62,7 +62,7 @@ tesseract_lang = "eng"    # passed to tesseract -l
 auto_paste = true         # `clippo plain` pastes after replacing the clipboard
 paste_on_select = true    # `clippo menu` pastes the entry you pick
 keys = "shift-insert"     # "shift-insert", "ctrl-v" or "ctrl-shift-v"
-delay_ms = 200            # wait before pasting, so the shortcut keys can be released
+delay_ms = 100            # wait before pasting, so the shortcut keys can be released
 release_modifiers = true  # send Super and Alt key-ups before pasting
 ```
 

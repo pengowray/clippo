@@ -71,8 +71,30 @@ fn main() -> ExitCode {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("clippo: {e:#}");
+            log(&format!("error: {e:#}"));
             ExitCode::FAILURE
         }
+    }
+}
+
+/// Append a line to `$XDG_STATE_HOME/clippo/clippo.log`. Shortcuts run clippo with nowhere to show stderr.
+pub fn log(msg: &str) {
+    use std::io::Write;
+    let Some(dirs) = directories::ProjectDirs::from("", "", "clippo") else {
+        return;
+    };
+    let Some(dir) = dirs.state_dir() else { return };
+    let _ = std::fs::create_dir_all(dir);
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(dir.join("clippo.log"))
+    {
+        let secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs());
+        let args: Vec<String> = std::env::args().skip(1).collect();
+        let _ = writeln!(f, "{secs} [{}] {msg}", args.join(" "));
     }
 }
 

@@ -31,6 +31,11 @@ pub fn run(cfg: &Config, paths: &Paths) -> Result<()> {
 
     let (cfg, paths) = (cfg.clone(), paths.clone());
     thread::spawn(move || ocr_worker(&cfg, &paths));
+    thread::spawn(|| {
+        if let Err(e) = crate::paste::serve() {
+            eprintln!("clippo: auto-paste unavailable: {e:#}");
+        }
+    });
 
     let status = child.wait()?;
     bail!("clipboard watching stopped: wl-paste exited ({status})");

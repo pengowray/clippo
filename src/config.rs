@@ -78,7 +78,7 @@ impl Default for PasteConfig {
             auto_paste: true,
             paste_on_select: true,
             keys: PasteKeys::ShiftInsert,
-            delay_ms: 200,
+            delay_ms: 100,
             release_modifiers: true,
         }
     }
@@ -134,6 +134,6 @@ mod tests {
         assert_eq!(c.ocr.tesseract_lang, "eng");
         assert!(c.paste.auto_paste);
         assert_eq!(c.paste.keys, PasteKeys::ShiftInsert);
-        assert_eq!(c.paste.delay_ms, 200);
+        assert_eq!(c.paste.delay_ms, 100);
     }
 }
