@@ -111,3 +111,7 @@ In COSMIC Settings, open Keyboard > Keyboard shortcuts > Custom shortcuts and ad
 - Shortcut: `Super+V`
 
 Remove or rebind any existing `Super+V` shortcut (such as one running cliphist) first.
+
+## License
+
+MIT
