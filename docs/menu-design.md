@@ -179,7 +179,7 @@ sit behind one row at the bottom:
 - Optional expiry: setting `Delete items not used for` (section 10, History), default
   **off**. Recommended default is off: the item cap already bounds the database, and a
   clipboard manager that quietly loses things is worse than one that keeps them behind a
-  fold. When turned on, the field defaults to 30 days. Expiry runs in `ingest` alongside
+  fold. On by default, set to 7 days. Expiry runs in `ingest` alongside
   `enforce_cap`.
 
 ### 3.5 Markdown detection
@@ -376,7 +376,7 @@ default is shown muted in the label's help text where it is not obvious from the
 | Label | Control | Default | Config key |
 |---|---|---|---|
 | Keep up to | number field, 10 to 100000, suffix `items` | `1000` | `max_items` |
-| Delete items not used for | toggle, then number field with suffix `days` (enabled when on) | off; 30 when turned on | `expire_days` (new; absent or 0 = off) |
+| Delete items not used for | toggle, then number field with suffix `days` (enabled when on) | on, 7 days | `expire_days` (new; default 7; 0 = off) |
 | Delete all history | button, destructive style | | |
 
 Help text under `Delete items not used for`: `Off keeps everything up to the item limit.`
@@ -601,7 +601,7 @@ The previous revision's questions were accepted. Remaining, with recommendations
 
 | Question | Recommendation |
 |---|---|
-| Expiry default | Off. Turning it on defaults to 30 days. |
+| Expiry default | On, 7 days (user decision). |
 | Should the older-items row remember being expanded between opens? | No. The recent set is the point of the fold; one Enter reopens it. |
 | Should `T` be enabled on plain-only text (as a no-op) to keep rows uniform? | No. A greyed button with `Already plain text` tells the user something true; an always-on button tells them nothing. |
 | Keep `text/rtf`? | Yes, only if offered; it is rare on Wayland and costs nothing. |
