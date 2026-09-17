@@ -66,7 +66,15 @@ pub fn run(cfg: &Config, paths: &Paths) -> Result<()> {
         crate::log(&msg);
         std::process::exit(1);
     });
-    crate::ui::run_resident(cfg, paths, toggles)
+    // The window is optional: if its toolkit stops, keep recording and only exit with
+    // wl-paste (the thread above).
+    if let Err(e) = crate::ui::run_resident(cfg, paths, toggles) {
+        eprintln!("clippo: history window stopped: {e:#}");
+        crate::log(&format!("history window stopped: {e:#}"));
+    }
+    loop {
+        thread::park();
+    }
 }
 
 /// The OCR engine, plus the settings it was built from so a `reload` can replace it.

@@ -83,7 +83,7 @@ pub fn models_dir(paths: &Paths) -> Option<PathBuf> {
         .cloned()
 }
 
-pub fn tesseract_available() -> bool {
+fn tesseract_available() -> bool {
     std::env::var_os("PATH")
         .map(|p| std::env::split_paths(&p).any(|d| d.join("tesseract").is_file()))
         .unwrap_or(false)
