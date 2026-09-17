@@ -3,7 +3,9 @@ use std::process::{Command, Stdio};
 
 use anyhow::{Context, Result, bail};
 
-use crate::config::Paths;
+use crate::clipboard;
+use crate::config::{Config, Paths};
+use crate::paste;
 use crate::store::{Store, Summary};
 use crate::thumbs;
 
@@ -72,7 +74,7 @@ fn fuzzel_running() -> bool {
         .is_ok_and(|s| s.success())
 }
 
-pub fn run(store: &Store, paths: &Paths) -> Result<()> {
+pub fn run(cfg: &Config, store: &Store, paths: &Paths) -> Result<()> {
     // Pressing the shortcut again closes an open picker.
     if fuzzel_running() {
         let _ = Command::new("pkill").args(["-x", "fuzzel"]).status();
@@ -118,7 +120,11 @@ pub fn run(store: &Store, paths: &Paths) -> Result<()> {
     let Some(id) = parse_selection(selected.trim_end_matches('\n')) else {
         return Ok(());
     };
-    copy_entry(store, id)
+    copy_entry(store, id)?;
+    if cfg.paste.paste_on_select {
+        paste::send(&cfg.paste)?;
+    }
+    Ok(())
 }
 
 /// Put an entry back on the clipboard with its original type.
@@ -126,21 +132,7 @@ pub fn copy_entry(store: &Store, id: i64) -> Result<()> {
     let (Some(entry), Some(content)) = (store.summary(id)?, store.content(id)?) else {
         bail!("no entry with id {id}");
     };
-    let mut child = Command::new("wl-copy")
-        .args(["--type", &entry.mime])
-        .stdin(Stdio::piped())
-        .spawn()
-        .context("could not run wl-copy")?;
-    child
-        .stdin
-        .take()
-        .expect("piped stdin")
-        .write_all(&content)?;
-    let status = child.wait()?;
-    if !status.success() {
-        bail!("wl-copy failed");
-    }
-    Ok(())
+    clipboard::copy(Some(&entry.mime), &content)
 }
 
 #[cfg(test)]

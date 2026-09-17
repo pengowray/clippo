@@ -1,7 +1,10 @@
+mod clipboard;
 mod config;
 mod ingest;
 mod menu;
 mod ocr;
+mod paste;
+mod plain;
 mod store;
 mod thumbs;
 mod watch;
@@ -33,8 +36,17 @@ enum Cmd {
     Watch,
     /// Store clipboard data from stdin (called by `wl-paste --watch`)
     Ingest,
-    /// Open the history picker; selecting an entry copies it
+    /// Open the history picker; selecting an entry copies it, and pastes it if `paste.paste_on_select` is on
     Menu,
+    /// Replace the clipboard with plain text (recognised text for images), then paste it
+    Plain {
+        /// Paste after replacing the clipboard, even if `paste.auto_paste` is off
+        #[arg(long, conflicts_with = "no_paste")]
+        paste: bool,
+        /// Only replace the clipboard; don't paste
+        #[arg(long)]
+        no_paste: bool,
+    },
     /// Write an entry's content to stdout
     Get {
         id: i64,
@@ -70,7 +82,10 @@ fn run(cli: Cli) -> Result<()> {
     match cli.command {
         Cmd::Watch => watch::run(&cfg, &paths),
         Cmd::Ingest => ingest::run(&cfg, &paths),
-        Cmd::Menu => menu::run(&Store::open(&paths.db)?, &paths),
+        Cmd::Menu => menu::run(&cfg, &Store::open(&paths.db)?, &paths),
+        Cmd::Plain { paste, no_paste } => {
+            plain::run(&cfg, &paths, paste || (cfg.paste.auto_paste && !no_paste))
+        }
         Cmd::Get { id, plain } => get(&cfg, &paths, id, plain),
         Cmd::List => {
             let store = Store::open(&paths.db)?;

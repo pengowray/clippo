@@ -186,6 +186,19 @@ impl Store {
         Ok(result)
     }
 
+    /// The stored entry with exactly this type and content, if any.
+    pub fn find(&self, mime: &str, content: &[u8]) -> Result<Option<Summary>> {
+        let hash = content_hash(mime, content);
+        Ok(self
+            .conn
+            .query_row(
+                &format!("SELECT {SUMMARY_COLS} FROM entries WHERE hash = ?1"),
+                [&hash],
+                summary_from_row,
+            )
+            .optional()?)
+    }
+
     /// Delete all but the `max_items` most recently used entries. Returns removed ids.
     pub fn enforce_cap(&self, max_items: usize) -> Result<Vec<i64>> {
         let mut stmt = self.conn.prepare(

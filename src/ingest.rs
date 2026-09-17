@@ -1,8 +1,8 @@
 use std::io::Read;
-use std::process::{Command, Stdio};
 
 use anyhow::Result;
 
+use crate::clipboard::paste as wl_paste;
 use crate::config::{Config, OcrEngineKind, Paths};
 use crate::store::{NewEntry, OcrStatus, Store};
 use crate::thumbs;
@@ -33,18 +33,8 @@ pub fn sniff_image(data: &[u8]) -> Option<&'static str> {
     }
 }
 
-fn wl_paste(args: &[&str]) -> Option<Vec<u8>> {
-    let out = Command::new("wl-paste")
-        .args(args)
-        .stdin(Stdio::null())
-        .stderr(Stdio::null())
-        .output()
-        .ok()?;
-    out.status.success().then_some(out.stdout)
-}
-
 /// Pick the image type to prefer from an offered type list.
-fn preferred_image_type(types: &[&str]) -> Option<String> {
+pub fn preferred_image_type(types: &[&str]) -> Option<String> {
     types
         .iter()
         .find(|t| **t == "image/png")

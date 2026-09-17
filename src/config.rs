@@ -48,21 +48,38 @@ impl Default for OcrConfig {
     }
 }
 
-/// Auto-paste settings. Parsed only; clippo core doesn't act on them yet.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum PasteKeys {
+    /// Pastes in most GTK, Qt, browser and terminal apps.
+    #[default]
+    ShiftInsert,
+    CtrlV,
+    CtrlShiftV,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct PasteConfig {
+    /// Paste straight away after `clippo plain`, unless `--no-paste` is given.
     pub auto_paste: bool,
-    pub keys: String,
+    /// Paste straight away after picking an entry in the menu.
+    pub paste_on_select: bool,
+    pub keys: PasteKeys,
+    /// Wait before pressing the paste keys, so the shortcut's keys can be let go.
     pub delay_ms: u64,
+    /// Tell the compositor Super and Alt are up before pasting.
+    pub release_modifiers: bool,
 }
 
 impl Default for PasteConfig {
     fn default() -> Self {
         Self {
             auto_paste: true,
-            keys: "shift-insert".into(),
-            delay_ms: 150,
+            paste_on_select: true,
+            keys: PasteKeys::ShiftInsert,
+            delay_ms: 200,
+            release_modifiers: true,
         }
     }
 }
@@ -116,7 +133,7 @@ mod tests {
         assert_eq!(c.ocr.engine, OcrEngineKind::Tesseract);
         assert_eq!(c.ocr.tesseract_lang, "eng");
         assert!(c.paste.auto_paste);
-        assert_eq!(c.paste.keys, "shift-insert");
-        assert_eq!(c.paste.delay_ms, 150);
+        assert_eq!(c.paste.keys, PasteKeys::ShiftInsert);
+        assert_eq!(c.paste.delay_ms, 200);
     }
 }
