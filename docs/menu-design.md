@@ -14,7 +14,7 @@ The one fact the window must make immediate: **what Enter will paste**. Everythi
 | Placement | Centred on the output that has the pointer (`IcedOutput::Active`). Not at the cursor: a fixed position keeps spatial memory. |
 | Process | Resident. `clippo watch` keeps the iced app alive and maps or unmaps the surface; `clippo menu` becomes a socket message (`menu toggle`). Cold-starting an iced app per keypress costs a few hundred ms and would feel like a launcher, not Win+V. Fallback for no service: `clippo menu` runs the window in-process. |
 | Toggle | Second `clippo menu` sends `menu toggle` to the socket; the window also handles Super+V itself in its key handler, because exclusive keyboard focus may stop the compositor shortcut firing. |
-| Close and paste | Unmap the surface, `roundtrip`, wait `AFTER_MENU_WAIT` (50 ms, may need tuning to 80 to 120 ms for cosmic-comp to return focus), then `copy_entry` + `paste::send`. |
+| Close and paste | Unmap the surface, `roundtrip`, wait `AFTER_MENU_WAIT` (50 ms, may need tuning to 80 to 120 ms for cosmic-comp to return focus), then copy + `paste::send`. |
 | Theme | Follows COSMIC's theme (dark for this user). Selection colour is the accent; selection is also marked by a 3 px left bar so it does not rely on colour alone. |
 
 ## 2. Layout
@@ -33,34 +33,37 @@ The one fact the window must make immediate: **what Enter will paste**. Everythi
 |  |  thumb |                                                               | +----------------+ |
 |  +--------+                                                               | | 2026-09-17     | |
 |---------------------------------------------------------------------------| | 14:00:05  Alt+3| |
-|  +--------+  Image 640×480 · JPEG                                         | +----------------+ |
+|  +--------+  Image 640×480 · JPEG                              [T]        | +----------------+ |
 |  |        |  Error 1002: connection refused by upstream                   |                    |
 |  |  thumb |  at proxy.internal:8443 while fetching /api/v2/session        |                    |
 |  +--------+                                                               |                    |
 |---------------------------------------------------------------------------|                    |
-|  https://github.com/pengowray/clippo/pull/12                              |                    |
+|  https://github.com/pengowray/clippo/pull/12                    [T]       |                    |
 |---------------------------------------------------------------------------|                    |
-|  +--------+  Image 4000×300 · PNG                                         |                    |
-|  |========|  No text found                                                |                    |
-|  +--------+                                                               |                    |
+|  ## Release notes                                            [M] [T]      |                    |
+|  - **Faster paste** on COSMIC                                             |                    |
+|  - See [the changelog](https://example.com/log)              6 more lines |                    |
 |---------------------------------------------------------------------------|                    |
-|  Tuesday meeting notes                                                    |                    |
+|  Tuesday meeting notes                                          [T]       |                    |
 |  - ship 0.2                                                               |                    |
-|  - fix the paste delay                                       6 more lines |                    |
+|  - fix the paste delay                                       2 more lines |                    |
 |---------------------------------------------------------------------------|                    |
-|  +--------+  Image 800×600 · PNG                                          |                    |
+|  +--------+  Image 800×600 · PNG                                [T]       |                    |
 |  |        |  Couldn't read text                                           |                    |
-|  |  thumb |                                                               |                    |
 |  +--------+                                                               |                    |
+|---------------------------------------------------------------------------|                    |
+|  v  412 older items (not used in the last day)                            |                    |
 +---------------------------------------------------------------------------+--------------------+
-| Enter paste · Shift+Enter paste as text · Shift+Del delete · Esc close                          |
+| Enter paste · Shift+Enter paste as plain text · Alt+Enter without Markdown · Shift+Del delete   |
 +------------------------------------------------------------------------------------------------+
 ```
 
-In the mockup row 1 is selected and row 2 is hovered; those are the only two rows that
-show the `[T] [x]` action strip.
+In the mockup row 1 is selected and row 2 is hovered; those are the only rows that show the
+`[x]` delete button. `[T]` (paste as plain text) is on every row, greyed on rows 4 and 6
+where there is nothing to strip. `[M]` (paste without Markdown) appears only on row 5, the
+one row where Markdown was detected. The last row is the collapsed older section (see 3.4).
 
-Proportions: 100 columns × 32 rows ≈ 8×16 px per cell at 800×500. The list column is
+Proportions: 100 columns × 33 rows ≈ 8×15 px per cell at 800×500. The list column is
 ~610 px, the macro column ~170 px, the search bar 40 px, the footer 24 px. Roughly 7 rows fit.
 
 Regions, in reading order:
@@ -69,7 +72,8 @@ Regions, in reading order:
    Right of it: item count, then the settings button (gear icon, tooltip `Settings`).
 2. **List**. Most recently used first, same order as today. The first row is the entry that
    is on the clipboard now, and has the caption `ON CLIPBOARD NOW` above it (only while no
-   search is active and the top entry matches the live clipboard; see 8.1).
+   search is active and the top entry matches the live clipboard; see 8.1). Entries not used
+   in the last 24 hours are collapsed into one row at the bottom (3.4).
 3. **Macro column** (right). Heading `Paste`, then one button per macro showing its live value.
 4. **Footer**. Key hints. Also where transient feedback (undo, errors) appears; see 7.
 
@@ -81,29 +85,44 @@ and does not earn a spot on the main surface.
 Common to all rows: 12 px padding, 1 px separator, minimum height 40 px, click anywhere
 pastes. Selected row: accent background at 20% plus the left bar. Hovered row: 8% highlight.
 
-Actions strip (`[T]` and `[x]` in the mockup) sits at the row's top right and is shown for
-the **selected** row and the **hovered** row only, so keyboard users see it too. Two icon
-buttons, 28×28 px, with tooltips:
+Actions strip at the row's top right, icon buttons 28×28 px, left to right:
 
-| Button | Tooltip | Action | Key |
-|---|---|---|---|
-| `T` (text icon) | `Paste as text` | Paste the plain text (for images, the recognised text) | Shift+Enter |
-| `x` | `Delete` | Delete the entry, with undo | Shift+Delete |
+| Button | Shown | Tooltip | Action | Key |
+|---|---|---|---|---|
+| `M` (Markdown icon) | only when Markdown is detected in a text entry (see 3.5) | `Paste without Markdown` | Paste the plain text with Markdown syntax removed | Alt+Enter |
+| `T` (text icon) | every row | `Paste as plain text` | Paste the plain text (image: recognised text) | Shift+Enter |
+| `x` | selected and hovered rows only | `Delete` | Delete the entry, with undo | Shift+Delete |
 
-For a text entry `Paste as text` is still shown, since `text/html` and rich copies exist in
-principle; for `text/plain` it does the same as `Paste`, which is fine.
+`T` is **enabled** when the entry has something to strip: a text entry with a stored rich
+format (HTML or RTF, see 11.2), or an image whose OCR is done and found text. Otherwise it
+is greyed with a tooltip saying why:
+
+| Entry | Greyed tooltip |
+|---|---|
+| Plain text with no rich format stored | `Already plain text` |
+| Image, OCR pending | `Reading text, try again in a moment` |
+| Image, OCR found nothing | `No text in this image` |
+| Image, OCR failed | `Couldn't read text in this image` |
+| Image, OCR off | `Text recognition is off. Turn it on in Settings` |
+
+`T` on every row is deliberate: it is the second most used action and the user asked for
+it to be visible. `M` only appears where it applies, so its presence is itself the signal
+"this row is Markdown". `x` stays hover-only because it is destructive and rare.
 
 ### 3.1 Text rows
 
 - Up to **3 lines**, verbatim (leading blank lines skipped). No code detection and no
-  monospace; always the UI font. Tabs render as 4 spaces. Whitespace is
-  not collapsed (today's fuzzel label collapses it; that hides structure).
+  monospace; always the UI font. Tabs render as 4 spaces. Whitespace is not collapsed
+  (today's fuzzel label collapses it; that hides structure).
 - Long single line: one line, ellipsis at the end.
 - Overflow indicator at bottom right, muted: `N more lines` when lines were cut, and
   `· N chars` when the preview is longer than 200 chars. Example: `3 more lines · 412 chars`.
   Needs content length from the store (see 11).
 - The 400-char preview from the store is enough for display; never load the full blob for
   the list.
+- The preview is always the plain-text form. Stored HTML or RTF is never rendered in the
+  list; the enabled `T` button is the only sign that formatting exists. A rendered preview
+  was considered and rejected: it would make rows unequal in height and slow to lay out.
 
 ### 3.2 Image rows
 
@@ -137,6 +156,49 @@ headings would push the important rows down. Relative time is not shown per row 
 rarely the question); it appears in the row's tooltip on hover after 700 ms:
 `Copied 3 min ago`. Needs `last_used` in `Summary` (see 11).
 
+### 3.4 Older entries
+
+Entries whose `last_used` is more than 24 hours ago are **not mixed into the list**. They
+sit behind one row at the bottom:
+
+```
+|  v  412 older items (not used in the last day)                            |
+```
+
+- The row is a normal list row: Down reaches it, Enter or click expands it. Expanded, the
+  older entries follow in the same order and format, and the row text changes to
+  `^  Hide 412 older items`. Expanded state lasts while the window is open and resets on the
+  next open, so the default view is always the recent set.
+- Not shown when there are no older entries. When there are no recent entries but older ones
+  exist, the list shows the row alone with the empty-state text above it (section 8).
+- Older entries are still kept up to `max_items` and are still deduped: re-copying one moves
+  it to the top and into the recent set.
+- **Search always includes older entries.** Matches are listed recent first, then a
+  non-interactive divider row `Older (not used in the last day)`, then older matches. The
+  count reads `12 of 1000 match`. The divider is not shown when there are no older matches.
+- Optional expiry: setting `Delete items not used for` (section 10, History), default
+  **off**. Recommended default is off: the item cap already bounds the database, and a
+  clipboard manager that quietly loses things is worse than one that keeps them behind a
+  fold. When turned on, the field defaults to 30 days. Expiry runs in `ingest` alongside
+  `enforce_cap`.
+
+### 3.5 Markdown detection
+
+A text entry counts as Markdown when its plain text contains **two or more** of:
+
+- a line starting with `#` to `######` followed by a space
+- a fenced code block (a line starting with three backticks or `~~~`)
+- an inline link or image, `[text](url)` or `![alt](url)`
+- paired emphasis on one line, `**x**`, `__x__`, `*x*`, `_x_` or `~~x~~`, where the opening
+  marker is followed by a non-space and the closing marker is preceded by a non-space
+- two or more lines starting with `- `, `* `, `+ ` or `1. ` (any number)
+- a line starting with `> `
+- a pipe table separator line such as `|---|---|`
+
+Detection runs on the full text once at insert time and is stored (`is_markdown`, see
+11.1) so the list does not re-scan 1000 entries per open. Two hits are required so that a
+single `*` or a lone dash list does not flag ordinary text.
+
 ## 4. Search
 
 - Filters on text preview, OCR text, and the `Image W×H` label, case-insensitive,
@@ -148,6 +210,7 @@ rarely the question); it appears in the row's tooltip on hover after 700 ms:
 - Escape with a non-empty search clears the search; Escape again closes.
 - Search performs on the in-memory list (1000 entries × 400 chars is trivial). SQLite FTS is
   not needed.
+- Older entries are searched too (3.4).
 
 ## 5. Keyboard
 
@@ -158,25 +221,27 @@ list regardless of focus, so there is no tab-switching between search and list.
 |---|---|
 | Super+V | Toggle the window (handled by the window when it has focus) |
 | type | Filter |
-| Up / Down | Move selection; wraps at the ends is off (predictable) |
+| Up / Down | Move selection; no wrap at the ends (predictable) |
 | Page Up / Page Down | Move by a page |
 | Ctrl+Home / Ctrl+End | First / last row (plain Home and End move the caret in the search field) |
-| Enter | Paste selected entry (close first) |
-| Shift+Enter | Paste as plain text (image: OCR text) |
-| Ctrl+Enter | Copy to clipboard only, no paste, window stays open. For when paste_on_select is unwanted once. |
+| Enter | Paste selected entry with all its stored formats (close first). On the older-items row: expand or collapse it |
+| Shift+Enter | Paste as plain text (image: OCR text). On a row where `T` is greyed, the footer shows the greyed tooltip text instead |
+| Alt+Enter | Paste without Markdown (text entries only; works whether or not Markdown was detected, detection only controls the button) |
+| Ctrl+Enter | Copy to clipboard only, no paste, window stays open. For when paste_on_select is unwanted once |
 | Shift+Delete | Delete selected entry; footer shows undo for 6 s (plain Delete edits the search text) |
-| Ctrl+Z | Undo the last delete (while the footer shows it). iced's text input may swallow Ctrl+Z; verify against the libcosmic pin. The footer `Undo` button is the guaranteed path. |
-| Alt+1, Alt+2, Alt+3 | Paste macro 1 to 3 (shown on the buttons) |
+| Ctrl+Z | Undo the last delete (while the footer shows it). iced's text input may swallow Ctrl+Z; verify against the libcosmic pin. The footer `Undo` button is the guaranteed path |
+| Alt+1 to Alt+9 | Paste macro N (shown on the buttons) |
 | Ctrl+, | Open settings |
-| Escape | Clear search, or close if search is empty. In settings: back to the list. |
+| Escape | Clear search, or close if search is empty. In settings: back to the list |
 
 Selection on open is always the top row, so `Super+V, Enter` re-pastes the current
 clipboard, and `Super+V, Down, Enter` pastes the previous one. That is the Windows habit and
 it must stay a two-key habit.
 
 With `Paste after picking an item` off: Enter, click, and the context menu `Paste` copy the
-entry and close without pasting; the footer hint reads `Enter copy · Shift+Enter copy as text`.
-Macros always paste; inserting text is their only purpose.
+entry and close without pasting; the footer hint reads `Enter copy · Shift+Enter copy as
+plain text · Alt+Enter copy without Markdown · Shift+Del delete`. Macros always paste;
+inserting text is their only purpose.
 
 Shift+Enter on an image whose OCR is still pending: wait up to 3 s for it, footer shows
 `Reading text...`; on failure show 7.2.
@@ -184,10 +249,11 @@ Shift+Enter on an image whose OCR is still pending: wait up to 3 s for it, foote
 ## 6. Mouse
 
 - Click a row: paste it.
-- Hover a row: highlight and reveal the action strip. Click `T` or `x` does the action
-  without pasting.
-- Right-click a row: context menu with `Paste`, `Paste as text`, `Copy only`, `Delete`. Same
-  four verbs as the keyboard; no extras.
+- Hover a row: highlight and reveal `x`. Click `M`, `T` or `x` does that action without a
+  normal paste.
+- Right-click a row: context menu with `Paste`, `Paste as plain text`, `Paste without
+  Markdown` (text entries only), `Copy only`, `Delete`. Items that are unavailable are
+  greyed, not hidden, so the menu has a stable shape.
 - Scroll wheel scrolls the list; the selected row does not follow the scroll.
 - Click outside the window: nothing (exclusive overlay, there is no "outside" to click; the
   compositor gives us the whole output). Escape or Super+V closes.
@@ -213,8 +279,9 @@ removed from the DB immediately; undo restores it at its original position (see 
 
 | Situation | Footer text |
 |---|---|
-| Paste-as-text on an image with no OCR text (failed or empty) | `No text in this image` |
+| Shift+Enter on a row where `T` is greyed | the greyed tooltip text from section 3 |
 | OCR engine missing when Shift+Enter needs it | `No text recognition engine. Set one up in Settings` |
+| Alt+Enter on an image | `Only text entries can have Markdown removed` |
 | DB read fails | `Couldn't read history: <error>` |
 
 ### 7.3 Banner states (above the list, replaces `ON CLIPBOARD NOW`)
@@ -244,7 +311,8 @@ Success is silent. The paste itself is the feedback.
 | State | List shows |
 |---|---|
 | No history at all | Centred: `Nothing copied yet` and below it, muted: `Text and images you copy will show up here` |
-| No history and service not running | Same, with the 7.3 banner above |
+| No recent entries, older ones exist | Centred: `Nothing copied in the last day`, with the older-items row below it |
+| No history and service not running | Same as the first, with the 7.3 banner above |
 | Search with no matches | Centred: `No matches for "foo"` and a `Clear search` link button (Escape does the same) |
 
 The macro column and settings stay usable in every empty state.
@@ -279,7 +347,7 @@ Right column, heading `Paste`. Three by default, top to bottom in order of expec
   If that proves fragile, the blunt fallback is a line `skip-next` that makes `ingest` drop
   the next text copy within 2 s.
 - **Previous clipboard restored** after the paste (default on, setting in 10): after
-  `paste::send` returns, wait 300 ms, then `copy_entry` the entry that was on the clipboard
+  `paste::send` returns, wait 300 ms, then re-copy the entry that was on the clipboard
   before (the top history entry, if it matched; otherwise do nothing, since we cannot restore
   what we did not record). Restoring re-copies the same content, so dedupe keeps history
   unchanged.
@@ -296,8 +364,9 @@ per-character keymap construction and does not work in every app.
 Opened by the gear button or Ctrl+,. **Not a separate window**: it replaces the list and
 macro column inside the same layer surface (libcosmic dialogs and secondary windows on a
 layer-shell app are awkward; a page swap is reliable). Header: back arrow + `Settings`, and
-`Reset to defaults` at the right. Escape or the back arrow returns to the list. The search bar is hidden while the page is
-shown. Four sections do not fit in ~440 px, so the page scrolls; sections keep their order.
+`Reset to defaults` at the right. Escape or the back arrow returns to the list. The search
+bar is hidden while the page is shown. Four sections do not fit in ~440 px, so the page
+scrolls; sections keep their order.
 
 Sections in order of how often they are touched. Each control shows the current value; the
 default is shown muted in the label's help text where it is not obvious from the control.
@@ -307,7 +376,10 @@ default is shown muted in the label's help text where it is not obvious from the
 | Label | Control | Default | Config key |
 |---|---|---|---|
 | Keep up to | number field, 10 to 100000, suffix `items` | `1000` | `max_items` |
+| Delete items not used for | toggle, then number field with suffix `days` (enabled when on) | off; 30 when turned on | `expire_days` (new; absent or 0 = off) |
 | Delete all history | button, destructive style | | |
+
+Help text under `Delete items not used for`: `Off keeps everything up to the item limit.`
 
 `Delete all history` opens an inline confirmation in place of the button:
 `Delete all 1,000 items? This can't be undone.` with `Delete all` (destructive) and `Cancel`.
@@ -319,8 +391,15 @@ The count is real.
 |---|---|---|---|
 | Paste after picking an item | toggle | on | `paste.paste_on_select` |
 | Paste after Paste as plain text (Super+Alt+V) | toggle | on | `paste.auto_paste` |
+| Super+Alt+V also removes Markdown syntax | toggle | on | `paste.plain_strips_markdown` (new) |
 | Paste by pressing | dropdown: `Shift+Insert (works in most apps and terminals)`, `Ctrl+V`, `Ctrl+Shift+V` | Shift+Insert | `paste.keys` |
 | Restore the previous clipboard after a macro | toggle | on | `macros.restore_clipboard` (new) |
+
+Help text under `Super+Alt+V also removes Markdown syntax`: `Only when the text looks like
+Markdown. Super+V's "Paste as plain text" never removes Markdown; use "Paste without
+Markdown" there.` Recommended default **on**: the detection gate (3.5) makes false positives
+rare, and the point of Super+Alt+V is "give me the text, not the markup". The user can turn
+it off if they paste Markdown source often.
 
 Advanced (collapsed disclosure, `Advanced`):
 
@@ -368,32 +447,135 @@ A list of rows, each: `Format` text field, live preview to the right, `Label` te
 
 ## 11. Changes to the data model and behaviour
 
-Needed by the design; each is small.
+### 11.1 Entries
 
-1. `Summary` gains `last_used: i64` and `content_len: usize` (bytes for images, chars for
-   text). Add to `SUMMARY_COLS`. Used for the hover tooltip and the `N chars` overflow hint.
+1. `Summary` gains `last_used: i64`, `content_len: usize` (bytes for images, chars for
+   text), `is_markdown: bool`, and `has_rich: bool` (a rich format is stored, 11.2). Add to
+   `SUMMARY_COLS`. `is_markdown` is computed at insert by the rules in 3.5.
 2. Store a `line_count` for text entries at insert time (or compute from the preview plus
    `content_len`; exact count needs the full text). Cheap to store, so store it.
 3. `Store::restore(id, last_used)` for undo, or keep a `deleted_at` column and hard-delete
    on cap enforcement. Prefer `deleted_at`: undo is then a single UPDATE and the blob never
    leaves the DB. Filter `deleted_at IS NULL` in `list`.
-4. `Config` gets `Serialize`; add `[macros]` (`restore_clipboard`, `[[macros.items]]` with
-   `format`, `label`). Writer uses `toml_edit`.
-5. Socket protocol (`paste.rs::serve`) gains: `menu toggle`, `reload`, `status` (reply:
-   `ocr=<engine|none> watching=1`), and a push line `ocr done <id>` to connected menu
-   clients. This turns the socket into the one channel between service and window.
-6. `ingest` reads the skip file (section 9) before upserting.
-7. Text preview: keep the first 400 chars but do not trim leading whitespace inside lines;
+4. `expire_days`: `ingest` deletes entries with `last_used` older than N days after
+   `enforce_cap`. `list` takes a `since` split so the window gets recent and older sets
+   without two queries.
+5. `Config` gets `Serialize`; add `expire_days`, `paste.plain_strips_markdown`, `[macros]`
+   (`restore_clipboard`, `[[macros.items]]` with `format`, `label`). Writer uses `toml_edit`.
+6. Socket protocol (`paste.rs::serve`) gains: `menu toggle`, `reload`, `status` (reply:
+   `ocr=<engine|none> watching=1`), `copy <id> [plain|nomd]` (11.2), and a push line
+   `ocr done <id>` to connected menu clients. This turns the socket into the one channel
+   between service and window.
+7. `ingest` reads the skip file (section 9) before upserting.
+8. Text preview: keep the first 400 chars but do not trim leading whitespace inside lines;
    the window needs the real shape.
-8. `menu::label` and its whitespace collapsing stay for `clippo list` output only.
-9. Distinguish `Pending` with no engine from `Pending` in progress at the source: `ingest`
-   already knows the engine kind; the window learns the real availability from `status`.
+9. `menu::label` and its whitespace collapsing stay for `clippo list` output only.
+10. Distinguish `Pending` with no engine from `Pending` in progress at the source: `ingest`
+    already knows the engine kind; the window learns the real availability from `status`.
 
-## 12. libcosmic notes and risks
+### 11.2 Rich formats
+
+Today `ingest` keeps one type per copy. To make "paste as plain text" mean something and to
+give apps their formatting back on a normal paste, store the rich types alongside.
+
+**Storage.** New table `formats(entry_id, mime, content)`, one row per extra type. The
+`entries.content` column stays the primary form (plain text, or the image) and the
+dedupe hash is computed on the primary only. Re-copying the same text from a different app
+replaces the stored formats with the new copy's (newest wins).
+
+**What is kept**, from the types the clipboard owner offers:
+
+| Primary | Extra formats kept |
+|---|---|
+| Text | `text/html` if it has real formatting (below); `text/rtf` or `application/rtf` if offered |
+| Image | `text/html` if offered (a browser image copy carries an `<img>` tag with its source URL and alt text; keeping it lets a paste into a rich editor embed the image instead of a bitmap) |
+
+Everything else (`text/uri-list`, app-private types, `x-kde-*`) is not stored.
+
+**"Real formatting" test for HTML.** Browsers wrap every copy in HTML, so storing all of it
+would make `T` enabled on nearly every row and mean nothing. Store `text/html` only when it
+contains at least one of: `<b`, `<strong`, `<i`, `<em`, `<u`, `<s`, `<a `, `<h1` to `<h6`,
+`<ul`, `<ol`, `<table`, `<img`, `<code`, `<pre`, `<blockquote`, or a `style=` attribute.
+Case-insensitive. Otherwise the copy is treated as plain text and `has_rich` is false.
+
+**Size.** Formats are capped at 1 MB each; larger ones are dropped and the copy is stored
+as plain. The 400-char preview and the row layout are unaffected.
+
+**Pasting.** A normal paste (Enter, click) offers the primary type plus every stored format
+so the target app picks what it understands. `Paste as plain text` offers only
+`text/plain;charset=utf-8` (images: the OCR text). `Paste without Markdown` offers only
+`text/plain` after stripping (section 12).
+
+**Offering several types at once is the implementation risk.** `wl-copy` serves one type
+per process. Options, in order of preference:
+
+1. `wl-clipboard-rs` crate, `copy::Options` with several `MimeSource`s. It supports
+   `zwlr_data_control`; check whether the pinned version also supports
+   `ext_data_control_v1` (COSMIC offers both today, so `zwlr` is enough for now). The source
+   must stay alive while it owns the clipboard, so the resident `clippo watch` process serves
+   it from a thread, on the socket request `copy <id>`. Without the service, the window
+   falls back to `wl-copy` with the primary type only and formatting is lost for that paste.
+2. A small data-control source of our own using `wayland-client` (already a dependency for
+   `vkbd.rs`). More code, no new crate.
+3. Run one `wl-copy` per type. Does not work: each takes ownership from the last.
+
+**Watcher feedback loop.** When clippo serves a multi-type copy, `wl-paste --watch` sees it
+and `ingest` runs. The primary hash matches an existing entry, so it is a bump to the top
+(correct) and the stored formats are replaced with identical ones. No skip needed.
+
+**`clippo plain` (Super+Alt+V)** keeps working on the live clipboard as now, and gains the
+Markdown step when `paste.plain_strips_markdown` is on and detection (3.5) fires.
+
+## 12. Removing Markdown
+
+Used by `Paste without Markdown` (Alt+Enter, the `M` button, the context menu) and by
+`clippo plain` when the setting is on. Input is the plain text; output is plain text. The
+goal is readable prose, not a Markdown parser: rules are line-based and regex-friendly.
+Apply in this order.
+
+1. **Fenced code.** From a line starting with three backticks or `~~~` to the next such
+   line: remove the fence lines, keep the contents verbatim and skip every other rule for
+   them. An unclosed fence runs to the end.
+2. **Indented code** (4 spaces or a tab, after a blank line): keep verbatim, skip other
+   rules.
+3. **Headings.** Remove a leading `#` to `######` plus its space, and trailing spaces plus
+   `#`s. Setext: a line of only `=` or `-` (3 or more) directly under a text line is removed.
+4. **Horizontal rules.** A line of only `***`, `---` or `___` (3 or more, spaces allowed)
+   is removed.
+5. **Block quotes.** Remove a leading `> ` (or `>`), repeatedly for nested quotes.
+6. **Lists.** A leading `- `, `* ` or `+ ` (after optional indent) becomes `- ` with the
+   same indent. Task markers `[ ] ` and `[x] ` after it are removed. Ordered items
+   (`1. `, `1) `) are kept as written.
+7. **Tables.** A line whose trimmed form starts and ends with `|`: remove the outer pipes,
+   replace each inner ` | ` with two spaces, trim. A separator line (`|---|:--:|`) is removed.
+8. **Reference definitions.** A line matching `[label]: url ...` is removed.
+9. **Images.** `![alt](url)` becomes `alt`; `![alt][ref]` becomes `alt`.
+10. **Links.** `[text](url)` and `[text][ref]` become `text`; `<http://x>` and
+    `<mailto:x>` become the address. Bare URLs are untouched.
+11. **Inline code.** `` `x` `` becomes `x` (also double-backtick spans).
+12. **Emphasis.** `**x**`, `__x__`, `*x*`, `_x_`, `~~x~~` become `x`, only when the opening
+    marker is followed by a non-space and the closing marker is preceded by a non-space, on
+    the same line. Underscores inside words (`snake_case_name`) are untouched. Unpaired
+    markers stay.
+13. **Escapes.** `\` before any of ``\`*_{}[]()#+-.!|>~`` is removed.
+14. **Hard breaks.** Two or more trailing spaces are trimmed; a trailing backslash line
+    break is removed.
+15. **Blank lines.** Runs of three or more blank lines collapse to two.
+
+Not handled, on purpose: HTML tags inside Markdown (left as is), footnotes (`[^1]` left as
+is), nested emphasis across lines. If the output equals the input, the action still
+"succeeds" silently; nothing claims it changed something.
+
+Tests to write: each rule alone, code fence protecting a heading inside it, `5 * 3 * 2`
+untouched, `a_b_c` untouched, a link inside bold, a table with a separator.
+
+## 13. libcosmic notes and risks
 
 - **Resident process**: strongly recommended (section 1). libcosmic's layer-shell support
   (`cosmic::iced::platform_specific::shell::commands::layer_surface`) can create and destroy
-  surfaces on demand from a running app. This is the applet-popup pattern.
+  surfaces on demand from a running app. This is the applet-popup pattern. It is now also
+  required for multi-type pastes (11.2), which need a process that stays alive to serve the
+  clipboard.
 - **Exclusive keyboard**: while the overlay is mapped, other compositor shortcuts may not
   fire. Super+V must be caught in-window. If cosmic-comp still delivers the global shortcut,
   the socket toggle handles it; both paths lead to the same close.
@@ -410,22 +592,25 @@ Needed by the design; each is small.
   check the libcosmic pin. Fallback: no bold, rely on the row being a match.
 - **Notifications**: `notify-rust` or `zbus` directly; both are small.
 - **1 s macro tick**: `iced::time::every(1s)` subscription only while mapped.
+- **Multi-type clipboard source** (11.2): `wl-clipboard-rs` version and protocol support
+  need checking before committing to it.
 
-## 13. Open questions
+## 14. Open questions
+
+The previous revision's questions were accepted. Remaining, with recommendations:
 
 | Question | Recommendation |
 |---|---|
-| Fixed 800×500, or larger on the 1440p monitor? | Fixed. Stable size beats 20% more rows. Revisit if the list feels cramped. |
-| Should Enter on the top row (already on clipboard) still re-copy? | Yes. It is harmless and makes the behaviour uniform. |
-| Macro paste restores the previous clipboard by default? | Yes, on. The macro is a one-off insert; losing the clipboard is the surprise. |
-| Macros in history? | No. A timestamp in history is noise, and dedupe would not help since the value changes every second. |
-| Shift+Enter or Ctrl+Enter for paste as text? | Shift+Enter (matches "paste as plain text" being Ctrl+Shift+V in most apps, so Shift is the plain-text modifier). Ctrl+Enter = copy only. |
-| Group rows by day? | No. Recency order with hover time is enough for a clipboard. |
-| Confirmation for single delete? | No, undo instead. Confirmation only for delete all and reset. |
-| Show file size for images? | Only in the hover tooltip (`1.2 MB`). Dimensions are the useful number. |
-| Should `clippo plain` (Super+Alt+V) move into this window? | Keep it as the separate shortcut; it is the fast path and does not need a window. |
+| Expiry default | Off. Turning it on defaults to 30 days. |
+| Should the older-items row remember being expanded between opens? | No. The recent set is the point of the fold; one Enter reopens it. |
+| Should `T` be enabled on plain-only text (as a no-op) to keep rows uniform? | No. A greyed button with `Already plain text` tells the user something true; an always-on button tells them nothing. |
+| Keep `text/rtf`? | Yes, only if offered; it is rare on Wayland and costs nothing. |
+| Keep `text/html` for browser image copies? | Yes. Rich editors then embed the image with its source; the bitmap is still there for everything else. |
+| `Paste without Markdown` for images (OCR text)? | No. OCR output is not Markdown; keep the action to text entries so its meaning stays fixed. |
+| Super+Alt+V strips Markdown by default? | On, gated by detection. |
+| Bullet character after stripping | `- `. ASCII, survives every target, reads as a list. |
 
-## 14. User-visible strings
+## 15. User-visible strings
 
 | Where | String | Note |
 |---|---|---|
@@ -434,6 +619,9 @@ Needed by the design; each is small.
 | Header, count while searching | `12 of 1000 match` | |
 | Header, settings button tooltip | `Settings` | |
 | List, caption above top row | `ON CLIPBOARD NOW` | small caps, muted |
+| List, older row, collapsed | `412 older items (not used in the last day)` | with a chevron; count is live |
+| List, older row, expanded | `Hide 412 older items` | |
+| List, divider in search results | `Older (not used in the last day)` | not selectable |
 | Image row, line 1 | `Image 1920×1080 · PNG` | format from mime, upper-case |
 | Image row, no dimensions | `Image · PNG` | |
 | Image row, OCR pending | `Reading text...` | with spinner |
@@ -441,22 +629,29 @@ Needed by the design; each is small.
 | Image row, OCR done, empty | `No text found` | muted |
 | Image row, OCR failed | `Couldn't read text` | muted, warning icon |
 | Text row, overflow | `3 more lines · 412 chars` | either part may be absent |
-| Text row, overflow, lines only | `9 more lines` | |
+| Text row, overflow, lines only | `6 more lines` | |
 | Row hover tooltip | `Copied 3 min ago` | relative; `just now`, `N min ago`, `N h ago`, `Yesterday 14:00`, `12 Sep 14:00` |
 | Row hover tooltip, image | `Copied 3 min ago · 1.2 MB` | |
-| Row action, tooltip | `Paste as text` | |
+| Row action, tooltip | `Paste without Markdown` | `M` button, only on detected rows |
+| Row action, tooltip | `Paste as plain text` | `T` button, enabled |
+| Row action, greyed tooltip | `Already plain text` | `T`, plain text with no rich format |
+| Row action, greyed tooltip | `Reading text, try again in a moment` | `T`, image, OCR pending |
+| Row action, greyed tooltip | `No text in this image` | `T`, image, OCR empty |
+| Row action, greyed tooltip | `Couldn't read text in this image` | `T`, image, OCR failed |
+| Row action, greyed tooltip | `Text recognition is off. Turn it on in Settings` | `T`, image, OCR off |
 | Row action, tooltip | `Delete` | |
-| Row context menu | `Paste` / `Paste as text` / `Copy only` / `Delete` | |
+| Row context menu | `Paste` / `Paste as plain text` / `Paste without Markdown` / `Copy only` / `Delete` | unavailable items greyed |
 | Macro column heading | `Paste` | |
 | Macro button | `14:00` / `2026-09-17` / `2026-09-17 14:00:05` | live values |
 | Macro button, accelerator | `Alt+1` | small |
 | Macro tooltip | `%Y-%m-%d · Change in Settings` | |
-| Footer, hints | `Enter paste · Shift+Enter paste as text · Shift+Del delete · Esc close` | |
-| Footer, hints, paste on pick off | `Enter copy · Shift+Enter copy as text · Shift+Del delete · Esc close` | |
+| Footer, hints | `Enter paste · Shift+Enter paste as plain text · Alt+Enter without Markdown · Shift+Del delete` | Esc hint dropped for width; Escape is universal |
+| Footer, hints, paste on pick off | `Enter copy · Shift+Enter copy as plain text · Alt+Enter copy without Markdown · Shift+Del delete` | |
 | Footer, after delete | `Deleted. Undo (Ctrl+Z)` | `Undo` is a link button |
 | Footer, waiting for OCR on Shift+Enter | `Reading text...` | |
-| Footer, error | `No text in this image` | |
+| Footer, error | any of the greyed `T` tooltips above | Shift+Enter on a greyed row |
 | Footer, error | `No text recognition engine. Set one up in Settings` | `Settings` is a link |
+| Footer, error | `Only text entries can have Markdown removed` | Alt+Enter on an image |
 | Footer, error | `Couldn't read history: <error>` | |
 | Footer, settings saved | `Saved` | |
 | Footer, settings saved, no service | `Saved. Restart the clippo service to apply paste and OCR settings` | |
@@ -464,6 +659,7 @@ Needed by the design; each is small.
 | Banner | `Text in images is not being read. Set up an engine in Settings` | `Settings` is a link |
 | Empty state, title | `Nothing copied yet` | |
 | Empty state, body | `Text and images you copy will show up here` | |
+| Empty state, only older entries | `Nothing copied in the last day` | older row shown below |
 | Empty search, title | `No matches for "foo"` | |
 | Empty search, button | `Clear search` | |
 | Notification, paste failed | title `Copied, but couldn't paste` body `<error>. Press Shift+Insert to paste it yourself.` | key name follows config |
@@ -474,11 +670,15 @@ Needed by the design; each is small.
 | Settings, reset confirm | `Reset all settings to defaults?` + `Reset` / `Cancel` | |
 | Settings, section | `History` | |
 | Settings, History | `Keep up to` + `items` suffix | |
+| Settings, History | `Delete items not used for` + `days` suffix | toggle + number |
+| Settings, History, help | `Off keeps everything up to the item limit.` | |
 | Settings, History | `Delete all history` | destructive button |
 | Settings, delete confirm | `Delete all 1,000 items? This can't be undone.` + `Delete all` / `Cancel` | count is live |
 | Settings, section | `Paste` | |
 | Settings, Paste | `Paste after picking an item` | |
 | Settings, Paste | `Paste after Paste as plain text (Super+Alt+V)` | |
+| Settings, Paste | `Super+Alt+V also removes Markdown syntax` | |
+| Settings, Paste, help | `Only when the text looks like Markdown. Super+V's "Paste as plain text" never removes Markdown; use "Paste without Markdown" there.` | |
 | Settings, Paste | `Paste by pressing` | |
 | Settings, Paste, options | `Shift+Insert (works in most apps and terminals)` / `Ctrl+V` / `Ctrl+Shift+V` | |
 | Settings, Paste | `Restore the previous clipboard after a macro` | |
