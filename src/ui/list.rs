@@ -475,23 +475,15 @@ fn formatted_glyph<'a>(enabled: bool) -> Element<'a, Message> {
         .into()
 }
 
-/// Symbolic image icon, dimmed when the button is greyed.
+/// Symbolic image icon. The icon theme's SVG ignores recolouring, so a greyed button shows
+/// nothing (the space is kept so the column lines up; the tooltip still says why).
 fn image_glyph<'a>(enabled: bool) -> Element<'a, Message> {
-    let icon = widget::icon::from_name("image-x-generic-symbolic").size(16);
     if enabled {
-        return icon.into();
-    }
-    match icon.icon().into_svg_handle() {
-        Some(handle) => widget::svg(handle)
-            .width(16)
-            .height(16)
-            .class(theme::Svg::Custom(std::rc::Rc::new(|t| {
-                cosmic::iced::widget::svg::Style {
-                    color: Some(with_alpha(t.cosmic().on_bg_color(), DISABLED_ALPHA)),
-                }
-            })))
-            .into(),
-        None => widget::Space::new().width(16).height(16).into(),
+        widget::icon::from_name("image-x-generic-symbolic")
+            .size(16)
+            .into()
+    } else {
+        widget::Space::new().width(16).height(16).into()
     }
 }
 
