@@ -10,8 +10,6 @@ pub const PREVIEW_LINES: usize = 3;
 const CHARS_HINT_ABOVE: usize = 200;
 /// `Store` keeps this many preview chars; a preview this long means the text was cut.
 const STORE_PREVIEW_CHARS: usize = 400;
-/// Entries not used for this long fold into the older row (design 3.4).
-pub const RECENT_WINDOW_MS: i64 = 24 * 60 * 60 * 1000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Ocr {
@@ -50,14 +48,14 @@ pub struct Row {
     haystack: String,
     pub is_markdown: bool,
     pub has_rich: bool,
-    pub last_used: Option<i64>,
+    /// Milliseconds since the Unix epoch.
+    pub last_used: i64,
+    /// Images only.
     pub size_bytes: Option<usize>,
 }
 
 impl Row {
     pub fn from_summary(s: &Summary) -> Self {
-        // TODO(backend): read last_used, content_len, line_count, is_markdown and has_rich
-        // from `Summary` once main adds them; until then these stay unknown.
         let (kind, haystack) = if s.is_image() {
             let format = s
                 .mime
@@ -94,14 +92,18 @@ impl Row {
             )
         } else {
             let preview = s.preview.as_deref().unwrap_or("");
-            let (lines, hidden) = preview_lines(preview);
-            let count = preview.chars().count();
-            let complete = count < STORE_PREVIEW_CHARS;
+            let (lines, hidden_in_preview) = preview_lines(preview);
+            // The store's line count covers the whole text; the preview alone only knows
+            // about lines inside its first 400 chars.
+            let more_lines = match s.line_count {
+                Some(total) => Some(total.saturating_sub(lines.len())),
+                None => (preview.chars().count() < STORE_PREVIEW_CHARS).then_some(hidden_in_preview),
+            };
             (
                 Kind::Text {
                     lines,
-                    more_lines: complete.then_some(hidden),
-                    chars: (complete && count > CHARS_HINT_ABOVE).then_some(count),
+                    more_lines,
+                    chars: (s.content_len > CHARS_HINT_ABOVE).then_some(s.content_len),
                 },
                 preview.to_lowercase(),
             )
@@ -111,10 +113,10 @@ impl Row {
             mime: s.mime.clone(),
             kind,
             haystack,
-            is_markdown: false,
-            has_rich: false,
-            last_used: None,
-            size_bytes: None,
+            is_markdown: s.is_markdown,
+            has_rich: s.has_rich,
+            last_used: s.last_used,
+            size_bytes: s.is_image().then_some(s.content_len),
         }
     }
 
@@ -134,9 +136,9 @@ impl Row {
         words.iter().all(|w| self.haystack.contains(w.as_str()))
     }
 
-    pub fn is_recent(&self, now_ms: i64) -> bool {
-        self.last_used
-            .is_none_or(|t| now_ms - t <= RECENT_WINDOW_MS)
+    /// Used at or after `cutoff` (see `Store::recent_cutoff`).
+    pub fn is_recent(&self, cutoff: i64) -> bool {
+        self.last_used >= cutoff
     }
 
     /// Why the `Paste as plain text` button is greyed, or `None` when it is enabled.
@@ -205,16 +207,25 @@ mod tests {
         assert_eq!(preview_lines("").0.len(), 0);
     }
 
-    fn text_row(preview: &str) -> Row {
-        Row::from_summary(&Summary {
+    fn summary(mime: &str, preview: Option<&str>) -> Summary {
+        Summary {
             id: 1,
-            mime: "text/plain;charset=utf-8".into(),
-            preview: Some(preview.into()),
+            mime: mime.into(),
+            preview: preview.map(str::to_string),
             width: None,
             height: None,
             ocr_status: OcrStatus::None,
             ocr_text: None,
-        })
+            last_used: 0,
+            content_len: preview.map_or(0, |p| p.chars().count()),
+            line_count: preview.map(|p| p.lines().count()),
+            is_markdown: false,
+            has_rich: false,
+        }
+    }
+
+    fn text_row(preview: &str) -> Row {
+        Row::from_summary(&summary("text/plain;charset=utf-8", Some(preview)))
     }
 
     #[test]
@@ -224,9 +235,14 @@ mod tests {
         assert_eq!(text_row(&long).overflow_hint().as_deref(), Some("3 more lines"));
         let wide = "x".repeat(250);
         assert_eq!(text_row(&wide).overflow_hint().as_deref(), Some("· 250 chars"));
-        // A full-length preview means the text was cut, so its length is unknown.
-        let cut = "y".repeat(400);
-        assert_eq!(text_row(&cut).overflow_hint(), None);
+        // Whole-text counts come from the store, not the 400-char preview.
+        let mut s = summary("text/plain;charset=utf-8", Some(&"y\n".repeat(200)));
+        s.content_len = 5000;
+        s.line_count = Some(2500);
+        assert_eq!(
+            Row::from_summary(&s).overflow_hint().as_deref(),
+            Some("2497 more lines · 5000 chars")
+        );
     }
 
     #[test]
@@ -239,15 +255,12 @@ mod tests {
 
     #[test]
     fn image_row_label_and_state() {
-        let r = Row::from_summary(&Summary {
-            id: 2,
-            mime: "image/png".into(),
-            preview: None,
-            width: Some(640),
-            height: Some(480),
-            ocr_status: OcrStatus::Done,
-            ocr_text: Some("Error 1002\nsecond".into()),
-        });
+        let mut s = summary("image/png", None);
+        s.width = Some(640);
+        s.height = Some(480);
+        s.ocr_status = OcrStatus::Done;
+        s.ocr_text = Some("Error 1002\nsecond".into());
+        let r = Row::from_summary(&s);
         match &r.kind {
             Kind::Image { label, ocr, ocr_lines } => {
                 assert_eq!(label, "Image 640×480 · PNG");

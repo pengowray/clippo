@@ -47,6 +47,24 @@ pub fn backend(cfg: &OcrConfig, paths: &Paths) -> Result<Option<Box<dyn OcrBacke
     }
 }
 
+/// Which engine `backend` would build, found without loading anything (models on disk,
+/// tesseract on PATH). `None` when OCR is off or nothing usable is installed.
+pub fn available(cfg: &OcrConfig, paths: &Paths) -> Option<&'static str> {
+    let ocrs = || models_dir(paths).is_some();
+    match cfg.engine {
+        OcrEngineKind::Off => None,
+        OcrEngineKind::Ocrs => ocrs().then_some("ocrs"),
+        OcrEngineKind::Tesseract => tesseract_available().then_some("tesseract"),
+        OcrEngineKind::Auto => {
+            if ocrs() {
+                Some("ocrs")
+            } else {
+                tesseract_available().then_some("tesseract")
+            }
+        }
+    }
+}
+
 pub fn no_engine_error() -> anyhow::Error {
     anyhow!(
         "no OCR engine available. Run `clippo setup-ocr`, install tesseract-ocr, or check `ocr.engine` in the config."

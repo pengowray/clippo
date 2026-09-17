@@ -1,9 +1,8 @@
 //! Settings page, shown in place of the list (design 10).
 //!
-//! The page edits the config file directly through `toml_edit`, so comments and unknown
-//! keys survive, and so keys the backend has not added to `Config` yet (`expire_days`,
-//! `paste.plain_strips_markdown`, `[macros]`) still round-trip. The app re-reads `Config`
-//! when the page closes.
+//! Writes go through `toml_edit` so comments and unknown keys in the user's file survive.
+//! Reads come from a `Config` re-parsed from the document after every write, so the page
+//! always shows what the file now says. The app re-reads its own `Config` on close.
 
 use std::path::PathBuf;
 
@@ -13,16 +12,18 @@ use cosmic::widget::{self, button, column, container, row, settings, text, toggl
 use cosmic::{Element, theme};
 use toml_edit::{DocumentMut, Item, value};
 
-use crate::config::{Config, Paths};
+use crate::config::{Config, Macro, OcrEngineKind, PasteKeys, PasteMethod, Paths};
 use crate::ocr;
 use crate::store::Store;
 use crate::thumbs;
 use crate::ui::app::{Footer, Message as AppMessage};
-use crate::ui::list::muted_text;
-use crate::ui::macros::{self, MAX_MACROS, Macro};
+use crate::ui::list::{muted_text, warning_text};
 use crate::ui::strings;
+use crate::{macros, service};
 
-const DEFAULT_EXPIRE_DAYS: i64 = 7;
+/// Alt+1 to Alt+9.
+const MAX_MACROS: usize = 9;
+const DEFAULT_EXPIRE_DAYS: u64 = 7;
 const STRFTIME_REFERENCE: &str = "https://docs.rs/chrono/latest/chrono/format/strftime/index.html";
 
 #[derive(Debug, Clone)]
@@ -78,6 +79,8 @@ pub struct State {
     config_file: PathBuf,
     paths: Paths,
     doc: DocumentMut,
+    /// What the document currently parses to.
+    cfg: Config,
     /// Something was written since the page opened; the app re-reads `Config` on close.
     pub changed: bool,
     item_count: usize,
@@ -98,26 +101,39 @@ const PASTE_KEYS_OPTIONS: [&str; 3] = [
     "Ctrl+V",
     "Ctrl+Shift+V",
 ];
-const PASTE_KEYS_VALUES: [&str; 3] = ["shift-insert", "ctrl-v", "ctrl-shift-v"];
+const PASTE_KEYS: [(PasteKeys, &str); 3] = [
+    (PasteKeys::ShiftInsert, "shift-insert"),
+    (PasteKeys::CtrlV, "ctrl-v"),
+    (PasteKeys::CtrlShiftV, "ctrl-shift-v"),
+];
 const METHOD_OPTIONS: [&str; 3] = [
     "Wayland virtual keyboard",
     "Virtual input device (uinput)",
     "Wayland first, then uinput",
 ];
-const METHOD_VALUES: [&str; 3] = ["wayland", "uinput", "auto"];
+const METHODS: [(PasteMethod, &str); 3] = [
+    (PasteMethod::Wayland, "wayland"),
+    (PasteMethod::Uinput, "uinput"),
+    (PasteMethod::Auto, "auto"),
+];
 const ENGINE_OPTIONS: [&str; 4] = [
     "Automatic (built-in if set up, else Tesseract)",
     "Built-in (ocrs)",
     "Tesseract",
     "Off",
 ];
-const ENGINE_VALUES: [&str; 4] = ["auto", "ocrs", "tesseract", "off"];
+const ENGINES: [(OcrEngineKind, &str); 4] = [
+    (OcrEngineKind::Auto, "auto"),
+    (OcrEngineKind::Ocrs, "ocrs"),
+    (OcrEngineKind::Tesseract, "tesseract"),
+    (OcrEngineKind::Off, "off"),
+];
 
 fn thousands(n: usize) -> String {
     let s = n.to_string();
     let mut out = String::with_capacity(s.len() + s.len() / 3);
     for (i, c) in s.chars().enumerate() {
-        if i > 0 && (s.len() - i) % 3 == 0 {
+        if i > 0 && (s.len() - i).is_multiple_of(3) {
             out.push(',');
         }
         out.push(c);
@@ -131,95 +147,60 @@ impl State {
             .ok()
             .and_then(|s| s.parse::<DocumentMut>().ok())
             .unwrap_or_default();
-        let macros = macros::read_from_doc(&doc).unwrap_or_else(macros::defaults);
-        let expire = doc
-            .get("expire_days")
-            .and_then(Item::as_integer)
-            .unwrap_or(DEFAULT_EXPIRE_DAYS);
-        Self {
+        let mut st = Self {
             config_file: paths.config_file.clone(),
             paths: paths.clone(),
             doc,
+            cfg: cfg.clone(),
             changed: false,
             item_count,
             confirm: Confirm::None,
             advanced_open: false,
             ocr_setup: OcrSetup::Idle,
-            max_items: cfg.max_items.to_string(),
-            expire_days: if expire > 0 {
-                expire.to_string()
-            } else {
-                DEFAULT_EXPIRE_DAYS.to_string()
-            },
-            delay_ms: cfg.paste.delay_ms.to_string(),
-            tesseract_lang: cfg.ocr.tesseract_lang.clone(),
-            macro_formats: macros.iter().map(|m| m.format.clone()).collect(),
-            macro_labels: macros
-                .iter()
-                .map(|m| m.label.clone().unwrap_or_default())
-                .collect(),
-        }
+            max_items: String::new(),
+            expire_days: String::new(),
+            delay_ms: String::new(),
+            tesseract_lang: String::new(),
+            macro_formats: Vec::new(),
+            macro_labels: Vec::new(),
+        };
+        st.sync_buffers();
+        st
     }
 
-    // ---- reading the document ------------------------------------------------------------
-
-    fn get_bool(&self, path: &[&str], default: bool) -> bool {
-        lookup(&self.doc, path)
-            .and_then(Item::as_bool)
-            .unwrap_or(default)
-    }
-
-    fn get_str(&self, path: &[&str]) -> Option<String> {
-        lookup(&self.doc, path)
-            .and_then(Item::as_str)
-            .map(str::to_string)
-    }
-
-    fn expire_on(&self) -> bool {
-        self.doc
-            .get("expire_days")
-            .and_then(Item::as_integer)
-            .unwrap_or(DEFAULT_EXPIRE_DAYS)
-            > 0
-    }
-
-    fn paste_keys_index(&self) -> usize {
-        let v = self
-            .get_str(&["paste", "keys"])
-            .unwrap_or_else(|| "shift-insert".into());
-        PASTE_KEYS_VALUES.iter().position(|k| *k == v).unwrap_or(0)
-    }
-
-    fn method_index(&self) -> usize {
-        let v = self
-            .get_str(&["paste", "method"])
-            .unwrap_or_else(|| "wayland".into());
-        METHOD_VALUES.iter().position(|k| *k == v).unwrap_or(0)
-    }
-
-    fn engine_index(&self) -> usize {
-        let v = self
-            .get_str(&["ocr", "engine"])
-            .unwrap_or_else(|| "auto".into());
-        ENGINE_VALUES.iter().position(|k| *k == v).unwrap_or(0)
+    /// Refresh the text buffers from `cfg` (on open and after a reset).
+    fn sync_buffers(&mut self) {
+        let c = &self.cfg;
+        self.max_items = c.max_items.to_string();
+        self.expire_days = if c.expire_days > 0 {
+            c.expire_days.to_string()
+        } else {
+            DEFAULT_EXPIRE_DAYS.to_string()
+        };
+        self.delay_ms = c.paste.delay_ms.to_string();
+        self.tesseract_lang = c.ocr.tesseract_lang.clone();
+        self.macro_formats = c.macros.items.iter().map(|m| m.format.clone()).collect();
+        self.macro_labels = c
+            .macros
+            .items
+            .iter()
+            .map(|m| m.label.clone().unwrap_or_default())
+            .collect();
     }
 
     fn uinput_in_use(&self) -> bool {
-        self.method_index() != 0
+        self.cfg.paste.method != PasteMethod::Wayland
     }
 
     /// What OCR is really doing, which the config alone does not say.
     fn ocr_status(&self) -> String {
-        let models = ocr::models_dir(&self.paths).is_some();
-        let tess = ocr::tesseract_available();
-        let lang = &self.tesseract_lang;
-        match ENGINE_VALUES[self.engine_index()] {
-            "off" => strings::OCR_STATUS_OFF.into(),
-            "ocrs" if models => strings::OCR_STATUS_BUILTIN.into(),
-            "tesseract" if tess => strings::ocr_status_tesseract(lang),
-            "auto" if models => strings::OCR_STATUS_BUILTIN.into(),
-            "auto" if tess => strings::ocr_status_tesseract(lang),
-            _ => strings::OCR_STATUS_NONE.into(),
+        if self.cfg.ocr.engine == OcrEngineKind::Off {
+            return strings::OCR_STATUS_OFF.into();
+        }
+        match ocr::available(&self.cfg.ocr, &self.paths) {
+            Some("ocrs") => strings::OCR_STATUS_BUILTIN.into(),
+            Some(_) => strings::ocr_status_tesseract(&self.cfg.ocr.tesseract_lang),
+            None => strings::OCR_STATUS_NONE.into(),
         }
     }
 
@@ -237,28 +218,24 @@ impl State {
     // ---- writing --------------------------------------------------------------------------
 
     fn set(&mut self, path: &[&str], item: Item) -> Option<Footer> {
-        let mut cur = self.doc.as_item_mut();
-        for key in &path[..path.len() - 1] {
-            cur = &mut cur[key];
-        }
-        cur[path[path.len() - 1]] = item;
-        for key in &path[..path.len() - 1] {
-            if let Some(t) = self.doc.get_mut(key).and_then(Item::as_table_mut) {
-                t.set_implicit(false);
-            }
-        }
+        set_path(&mut self.doc, path, item);
         self.save()
     }
 
     fn save(&mut self) -> Option<Footer> {
+        let text = self.doc.to_string();
+        match toml::from_str::<Config>(&text) {
+            Ok(cfg) => self.cfg = cfg,
+            Err(e) => return Some(Footer::Error(strings::footer_save_failed(&e.to_string()))),
+        }
         if let Some(dir) = self.config_file.parent() {
             let _ = std::fs::create_dir_all(dir);
         }
-        if let Err(e) = std::fs::write(&self.config_file, self.doc.to_string()) {
+        if let Err(e) = std::fs::write(&self.config_file, text) {
             return Some(Footer::Error(strings::footer_save_failed(&e.to_string())));
         }
         self.changed = true;
-        Some(if crate::ui::service::reload() {
+        Some(if service::reload(&self.paths).is_ok() {
             Footer::Info(strings::FOOTER_SAVED.into())
         } else {
             Footer::Info(strings::FOOTER_SAVED_NO_SERVICE.into())
@@ -301,16 +278,10 @@ impl State {
             }
             Message::ResetConfirm => {
                 self.confirm = Confirm::None;
+                // Defaults are the absence of keys (design 10).
                 self.doc = DocumentMut::new();
                 let f = self.save();
-                let cfg = Config::default();
-                self.max_items = cfg.max_items.to_string();
-                self.expire_days = DEFAULT_EXPIRE_DAYS.to_string();
-                self.delay_ms = cfg.paste.delay_ms.to_string();
-                self.tesseract_lang = cfg.ocr.tesseract_lang.clone();
-                let d = macros::defaults();
-                self.macro_formats = d.iter().map(|m| m.format.clone()).collect();
-                self.macro_labels = d.iter().map(|_| String::new()).collect();
+                self.sync_buffers();
                 f
             }
             Message::MaxItems(s) => {
@@ -327,7 +298,7 @@ impl State {
                         .parse::<i64>()
                         .ok()
                         .filter(|d| *d > 0)
-                        .unwrap_or(DEFAULT_EXPIRE_DAYS)
+                        .unwrap_or(DEFAULT_EXPIRE_DAYS as i64)
                 } else {
                     0
                 };
@@ -336,7 +307,9 @@ impl State {
             Message::ExpireDays(s) => {
                 self.expire_days = s;
                 match self.expire_days.trim().parse::<i64>() {
-                    Ok(n) if n > 0 && self.expire_on() => self.set(&["expire_days"], value(n)),
+                    Ok(n) if n > 0 && self.cfg.expire_days > 0 => {
+                        self.set(&["expire_days"], value(n))
+                    }
                     _ => None,
                 }
             }
@@ -359,16 +332,14 @@ impl State {
             }
             Message::PasteOnSelect(v) => self.set(&["paste", "paste_on_select"], value(v)),
             Message::AutoPaste(v) => self.set(&["paste", "auto_paste"], value(v)),
-            Message::PlainStripsMarkdown(v) => {
-                self.set(&["paste", "plain_strips_markdown"], value(v))
-            }
-            Message::PasteKeys(i) => self.set(&["paste", "keys"], value(PASTE_KEYS_VALUES[i])),
+            Message::PlainStripsMarkdown(v) => self.set(&["plain", "strip_markdown"], value(v)),
+            Message::PasteKeys(i) => self.set(&["paste", "keys"], value(PASTE_KEYS[i].1)),
             Message::RestoreClipboard(v) => self.set(&["macros", "restore_clipboard"], value(v)),
             Message::ToggleAdvanced => {
                 self.advanced_open = !self.advanced_open;
                 None
             }
-            Message::Method(i) => self.set(&["paste", "method"], value(METHOD_VALUES[i])),
+            Message::Method(i) => self.set(&["paste", "method"], value(METHODS[i].1)),
             Message::DelayMs(s) => {
                 self.delay_ms = s;
                 match self.delay_ms.trim().parse::<i64>() {
@@ -379,7 +350,7 @@ impl State {
                 }
             }
             Message::ReleaseModifiers(v) => self.set(&["paste", "release_modifiers"], value(v)),
-            Message::OcrEngine(i) => self.set(&["ocr", "engine"], value(ENGINE_VALUES[i])),
+            Message::OcrEngine(i) => self.set(&["ocr", "engine"], value(ENGINES[i].1)),
             Message::SetupOcr => {
                 self.ocr_setup = OcrSetup::Downloading;
                 let task = iced::Task::future(async {
@@ -510,7 +481,7 @@ impl State {
     }
 
     fn history_section(&self) -> Element<'_, Message> {
-        let expire_on = self.expire_on();
+        let expire_on = self.cfg.expire_days > 0;
         let delete_all: Element<'_, Message> = if self.confirm == Confirm::DeleteAll {
             row![
                 text(strings::delete_all_confirm(&thousands(self.item_count))),
@@ -529,7 +500,7 @@ impl State {
             .title(strings::SECTION_HISTORY)
             .add(settings::item(
                 strings::KEEP_UP_TO,
-                number_field(&self.max_items, strings::SUFFIX_ITEMS, Message::MaxItems),
+                number_field(&self.max_items, strings::SUFFIX_ITEMS, Message::MaxItems, true),
             ))
             .add(
                 settings::item::builder(strings::DELETE_NOT_USED_FOR)
@@ -537,7 +508,7 @@ impl State {
                     .control(
                         row![
                             toggler(expire_on).on_toggle(Message::ExpireOn),
-                            number_field_enabled(
+                            number_field(
                                 &self.expire_days,
                                 strings::SUFFIX_DAYS,
                                 Message::ExpireDays,
@@ -554,6 +525,7 @@ impl State {
 
     fn paste_section(&self) -> Element<'_, Message> {
         let uinput = self.uinput_in_use();
+        let p = &self.cfg.paste;
         let mut advanced = column![
             button::text(strings::ADVANCED)
                 .leading_icon(widget::icon::from_name(if self.advanced_open {
@@ -565,62 +537,53 @@ impl State {
         ]
         .spacing(8);
         if self.advanced_open {
+            let method = METHODS.iter().position(|(m, _)| *m == p.method).unwrap_or(0);
             advanced = advanced
                 .push(
                     settings::item::builder(strings::HOW_KEYS_ARE_SENT)
                         .description(strings::UINPUT_HELP)
                         .control(widget::dropdown(
                             &METHOD_OPTIONS[..],
-                            Some(self.method_index()),
+                            Some(method),
                             Message::Method,
                         )),
                 )
                 .push(settings::item(
                     strings::WAIT_BEFORE_PASTING,
-                    number_field_enabled(
-                        &self.delay_ms,
-                        strings::SUFFIX_MS,
-                        Message::DelayMs,
-                        uinput,
-                    ),
+                    number_field(&self.delay_ms, strings::SUFFIX_MS, Message::DelayMs, uinput),
                 ))
                 .push(settings::item(
                     strings::RELEASE_MODIFIERS,
-                    toggler(self.get_bool(&["paste", "release_modifiers"], true))
+                    toggler(p.release_modifiers)
                         .on_toggle_maybe(uinput.then_some(Message::ReleaseModifiers)),
                 ));
         }
+        let keys = PASTE_KEYS.iter().position(|(k, _)| *k == p.keys).unwrap_or(0);
         settings::section()
             .title(strings::SECTION_PASTE)
             .add(settings::item(
                 strings::PASTE_AFTER_PICKING,
-                toggler(self.get_bool(&["paste", "paste_on_select"], true))
-                    .on_toggle(Message::PasteOnSelect),
+                toggler(p.paste_on_select).on_toggle(Message::PasteOnSelect),
             ))
             .add(settings::item(
                 strings::PASTE_AFTER_PLAIN,
-                toggler(self.get_bool(&["paste", "auto_paste"], true)).on_toggle(Message::AutoPaste),
+                toggler(p.auto_paste).on_toggle(Message::AutoPaste),
             ))
             .add(
                 settings::item::builder(strings::PLAIN_STRIPS_MARKDOWN)
                     .description(strings::PLAIN_STRIPS_MARKDOWN_HELP)
                     .control(
-                        toggler(self.get_bool(&["paste", "plain_strips_markdown"], true))
+                        toggler(self.cfg.plain.strip_markdown)
                             .on_toggle(Message::PlainStripsMarkdown),
                     ),
             )
             .add(settings::item(
                 strings::PASTE_BY_PRESSING,
-                widget::dropdown(
-                    &PASTE_KEYS_OPTIONS[..],
-                    Some(self.paste_keys_index()),
-                    Message::PasteKeys,
-                ),
+                widget::dropdown(&PASTE_KEYS_OPTIONS[..], Some(keys), Message::PasteKeys),
             ))
             .add(settings::item(
                 strings::RESTORE_CLIPBOARD,
-                toggler(self.get_bool(&["macros", "restore_clipboard"], true))
-                    .on_toggle(Message::RestoreClipboard),
+                toggler(self.cfg.macros.restore_clipboard).on_toggle(Message::RestoreClipboard),
             ))
             .add(advanced)
             .into()
@@ -628,15 +591,15 @@ impl State {
 
     fn ocr_section(&self) -> Element<'_, Message> {
         let models_missing = ocr::models_dir(&self.paths).is_none();
+        let engine = ENGINES
+            .iter()
+            .position(|(e, _)| *e == self.cfg.ocr.engine)
+            .unwrap_or(0);
         let mut section = settings::section()
             .title(strings::SECTION_OCR)
             .add(settings::item(
                 strings::READ_TEXT_IN_IMAGES,
-                widget::dropdown(
-                    &ENGINE_OPTIONS[..],
-                    Some(self.engine_index()),
-                    Message::OcrEngine,
-                ),
+                widget::dropdown(&ENGINE_OPTIONS[..], Some(engine), Message::OcrEngine),
             ))
             .add(text::caption(self.ocr_status()).class(theme::Text::Custom(muted_text)));
         if models_missing || self.ocr_setup != OcrSetup::Idle {
@@ -648,7 +611,7 @@ impl State {
                 OcrSetup::Installed => button::standard(strings::INSTALLED).into(),
                 OcrSetup::Failed(e) => column![
                     button::standard(strings::SETUP_BUILTIN).on_press(Message::SetupOcr),
-                    text::caption(e.clone()).class(theme::Text::Custom(crate::ui::list::warning_text)),
+                    text::caption(e.clone()).class(theme::Text::Custom(warning_text)),
                 ]
                 .spacing(4)
                 .into(),
@@ -668,12 +631,16 @@ impl State {
     fn macros_section(&self) -> Element<'_, Message> {
         let mut section = settings::section().title(strings::SECTION_MACROS);
         let n = self.macro_formats.len();
+        let now = chrono::Local::now();
         for (i, (f, l)) in self.macro_formats.iter().zip(&self.macro_labels).enumerate() {
-            let preview = Macro {
-                format: f.clone(),
-                label: None,
-            }
-            .value();
+            let preview = macros::render(
+                &Macro {
+                    format: f.clone(),
+                    label: None,
+                },
+                &now,
+            )
+            .unwrap_or_else(|e| format!("({e})"));
             let r = row![
                 widget::text_input(strings::MACRO_FORMAT, f.as_str())
                     .label(strings::MACRO_FORMAT)
@@ -709,12 +676,24 @@ impl State {
     }
 }
 
-fn lookup<'a>(doc: &'a DocumentMut, path: &[&str]) -> Option<&'a Item> {
-    let mut cur: &Item = doc.as_item();
-    for key in path {
-        cur = cur.get(key)?;
+/// Write `item` at `path` (one or two segments), keeping `[section]` tables as real tables
+/// rather than the inline `section = { key = ... }` form that plain indexing produces.
+fn set_path(doc: &mut DocumentMut, path: &[&str], item: Item) {
+    match path {
+        [key] => {
+            doc[key] = item;
+        }
+        [section, key] => {
+            let table = match doc.remove(section) {
+                Some(Item::Table(t)) => t,
+                Some(Item::Value(toml_edit::Value::InlineTable(t))) => t.into_table(),
+                _ => toml_edit::Table::new(),
+            };
+            doc.insert(section, Item::Table(table));
+            doc[section][key] = item;
+        }
+        _ => unreachable!("settings paths have one or two segments"),
     }
-    Some(cur)
 }
 
 fn run_setup_ocr() -> Result<(), String> {
@@ -731,14 +710,6 @@ fn run_setup_ocr() -> Result<(), String> {
 }
 
 fn number_field<'a>(
-    value: &'a str,
-    suffix: &'a str,
-    on_input: fn(String) -> Message,
-) -> Element<'a, Message> {
-    number_field_enabled(value, suffix, on_input, true)
-}
-
-fn number_field_enabled<'a>(
     value: &'a str,
     suffix: &'a str,
     on_input: fn(String) -> Message,
@@ -767,17 +738,24 @@ mod tests {
     }
 
     #[test]
-    fn nested_set_keeps_comments() {
-        let mut doc: DocumentMut = "# mine\nmax_items = 5\n[ocr]\nengine = \"off\" # keep\n"
-            .parse()
-            .unwrap();
-        doc["paste"]["keys"] = value("ctrl-v");
+    fn nested_set_keeps_comments_and_parses_back() {
+        let mut doc: DocumentMut =
+            "# mine\nmax_items = 5\npaste = { delay_ms = 7 }\n[ocr]\nengine = \"off\" # keep\n"
+                .parse()
+                .unwrap();
+        set_path(&mut doc, &["paste", "keys"], value("ctrl-v"));
+        set_path(&mut doc, &["plain", "strip_markdown"], value(false));
+        set_path(&mut doc, &["max_items"], value(9));
         let s = doc.to_string();
         assert!(s.contains("# mine"));
         assert!(s.contains("# keep"));
-        assert!(s.contains("[paste]"));
-        assert!(s.contains("keys = \"ctrl-v\""));
-        assert!(lookup(&doc, &["paste", "keys"]).is_some());
-        assert!(lookup(&doc, &["nope", "keys"]).is_none());
+        assert!(s.contains("[paste]"), "{s}");
+        assert!(s.contains("[plain]"), "{s}");
+        assert!(s.contains("delay_ms = 7"), "{s}");
+        let cfg: Config = toml::from_str(&s).unwrap();
+        assert_eq!(cfg.paste.keys, PasteKeys::CtrlV);
+        assert!(!cfg.plain.strip_markdown);
+        assert_eq!(cfg.max_items, 9);
+        assert_eq!(cfg.paste.delay_ms, 7);
     }
 }

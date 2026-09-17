@@ -3,12 +3,16 @@ use anyhow::{Result, bail};
 use crate::clipboard;
 use crate::config::{Config, Paths};
 use crate::ingest::{preferred_image_type, sniff_image};
+use crate::markdown;
 use crate::ocr;
 use crate::paste;
 use crate::store::{OcrStatus, Store};
 
 /// Replace the clipboard with its plain text (recognised text for images), then optionally paste.
-pub fn run(cfg: &Config, paths: &Paths, auto_paste: bool) -> Result<()> {
+///
+/// `strip_markdown` overrides `plain.strip_markdown`; either way Markdown is only removed from
+/// text that looks like Markdown, never from an image's recognised text.
+pub fn run(cfg: &Config, paths: &Paths, auto_paste: bool, strip_markdown: Option<bool>) -> Result<()> {
     let types = clipboard::list_types();
     let types: Vec<&str> = types.iter().map(String::as_str).collect();
 
@@ -17,7 +21,12 @@ pub fn run(cfg: &Config, paths: &Paths, auto_paste: bool) -> Result<()> {
         .any(|t| t.starts_with("text/plain") || *t == "UTF8_STRING")
     {
         let data = clipboard::paste(&["--no-newline", "--type", "text"]).unwrap_or_default();
-        String::from_utf8_lossy(&data).into_owned()
+        let text = String::from_utf8_lossy(&data).into_owned();
+        if strip_markdown.unwrap_or(cfg.plain.strip_markdown) && markdown::looks_like(&text) {
+            markdown::strip(&text)
+        } else {
+            text
+        }
     } else if let Some(t) = preferred_image_type(&types)
         && let Some(img) = clipboard::paste(&["--type", &t])
     {
@@ -31,7 +40,7 @@ pub fn run(cfg: &Config, paths: &Paths, auto_paste: bool) -> Result<()> {
 
     clipboard::copy(None, text.as_bytes())?;
     if auto_paste {
-        paste::send(&cfg.paste, false)?;
+        paste::send(paths, &cfg.paste, false)?;
     }
     Ok(())
 }

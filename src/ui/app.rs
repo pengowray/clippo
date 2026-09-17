@@ -24,15 +24,14 @@ use cosmic::surface::action::{LiveSettings, simple_layer_shell};
 use cosmic::widget::{self, column, container, row, text, text_input};
 use cosmic::{Element, theme};
 
-use crate::clipboard;
-use crate::config::{Config, Paths, PasteConfig};
-use crate::paste;
-use crate::store::{OcrStatus, Store, Summary};
+use crate::clipboard::{self, CopyMode};
+use crate::config::{Config, OcrEngineKind, Paths};
+use crate::store::{OcrStatus, Store};
 use crate::thumbs;
 use crate::ui::list;
-use crate::ui::macros::{self, Macro};
 use crate::ui::rows::{self, Ocr, Row};
 use crate::ui::strings;
+use crate::{macros, paste, service};
 
 pub const WIDTH: u32 = 800;
 pub const HEIGHT: u32 = 500;
@@ -44,8 +43,6 @@ pub const MACRO_COLUMN_WIDTH: f32 = 170.0;
 const CLOSE_WAIT: Duration = Duration::from_millis(60);
 /// How long footer feedback stays (design 7).
 const FOOTER_TTL: Duration = Duration::from_secs(6);
-/// After a macro paste, before restoring the previous clipboard (design 9).
-const RESTORE_WAIT: Duration = Duration::from_millis(300);
 /// Shift+Enter on a pending image waits this long for OCR (design 5).
 const OCR_WAIT: Duration = Duration::from_secs(3);
 const OCR_POLL: Duration = Duration::from_millis(500);
@@ -98,23 +95,21 @@ pub enum Footer {
 
 /// Work done after the surface is unmapped, on a blocking thread.
 #[derive(Debug, Clone)]
-pub struct Job {
-    pub mime: Option<String>,
-    pub data: Vec<u8>,
-    pub paste: bool,
-    /// Re-copy this after the paste (macros restore the previous clipboard).
-    pub restore: Option<(String, Vec<u8>)>,
+pub enum Job {
+    /// Copy an entry (with the service, every stored format) and paste it if `paste`.
+    Entry {
+        id: i64,
+        mode: CopyMode,
+        paste: bool,
+    },
+    /// `clippo macro n`: copy, paste, restore the previous clipboard (design 9).
+    Macro(usize),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum JobError {
     Copy(String),
     Paste(String),
-}
-
-struct Deleted {
-    summary: Summary,
-    content: Vec<u8>,
 }
 
 #[derive(Debug, Clone)]
@@ -132,8 +127,7 @@ pub enum Message {
     Tick,
     Reload,
     ThumbReady(i64, Option<PathBuf>),
-    OcrWaited(i64, Option<String>),
-    Close,
+    OcrWaited(i64, bool),
     Done(Result<(), JobError>),
     OpenSettings,
     CloseSettings,
@@ -158,9 +152,8 @@ pub struct App {
     thumbs: HashMap<i64, widget::image::Handle>,
     footer: Option<(Footer, Instant)>,
     page: Page,
-    macros: Vec<Macro>,
-    restore_clipboard: bool,
-    deleted: Option<Deleted>,
+    /// Entry the footer's Undo would bring back.
+    deleted: Option<i64>,
     service_running: bool,
     ocr_engine_missing: bool,
     closing: bool,
@@ -170,25 +163,18 @@ pub struct App {
 impl App {
     // ---- list model -------------------------------------------------------------------
 
-    fn now_ms() -> i64 {
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis() as i64
-    }
-
     fn searching(&self) -> bool {
         !self.query.trim().is_empty()
     }
 
     fn older_count(&self) -> usize {
-        let now = Self::now_ms();
-        self.rows.iter().filter(|r| !r.is_recent(now)).count()
+        let cutoff = Store::recent_cutoff();
+        self.rows.iter().filter(|r| !r.is_recent(cutoff)).count()
     }
 
     /// Rows currently laid out, in order.
     pub fn items(&self) -> Vec<Item> {
-        let now = Self::now_ms();
+        let cutoff = Store::recent_cutoff();
         let mut out = Vec::with_capacity(self.rows.len() + 2);
         if self.searching() {
             let words = rows::query_words(&self.query);
@@ -197,7 +183,7 @@ impl App {
                 .iter()
                 .enumerate()
                 .filter(|(_, r)| r.matches(&words))
-                .partition(|(_, r)| r.is_recent(now));
+                .partition(|(_, r)| r.is_recent(cutoff));
             out.extend(recent.iter().map(|(i, _)| Item::Entry(*i)));
             if !older.is_empty() {
                 out.push(Item::Divider);
@@ -208,14 +194,14 @@ impl App {
                 self.rows
                     .iter()
                     .enumerate()
-                    .filter(|(_, r)| r.is_recent(now))
+                    .filter(|(_, r)| r.is_recent(cutoff))
                     .map(|(i, _)| Item::Entry(i)),
             );
             let older: Vec<usize> = self
                 .rows
                 .iter()
                 .enumerate()
-                .filter(|(_, r)| !r.is_recent(now))
+                .filter(|(_, r)| !r.is_recent(cutoff))
                 .map(|(i, _)| i)
                 .collect();
             if !older.is_empty() {
@@ -402,9 +388,10 @@ impl App {
     /// Unmap the surface, then run `job` on a blocking thread, then exit.
     fn close_and(&mut self, job: Job) -> Task<Message> {
         self.closing = true;
-        let paste_cfg = self.cfg.paste.clone();
+        let cfg = self.cfg.clone();
+        let paths = self.paths.clone();
         let run = iced::Task::future(async move {
-            tokio::task::spawn_blocking(move || run_job(job, &paste_cfg))
+            tokio::task::spawn_blocking(move || run_job(job, &cfg, &paths))
                 .await
                 .unwrap_or_else(|e| Err(JobError::Paste(e.to_string())))
         })
@@ -420,35 +407,23 @@ impl App {
             return Task::none();
         };
         let id = row.id;
+        let paste = self.cfg.paste.paste_on_select;
         match action {
-            RowAction::Paste => match store.content(id) {
-                Ok(Some(data)) => {
-                    let mime = row.mime.clone();
-                    let paste = self.cfg.paste.paste_on_select;
-                    self.close_and(Job {
-                        mime: Some(mime),
-                        data,
-                        paste,
-                        restore: None,
-                    })
+            RowAction::Paste => self.close_and(Job::Entry {
+                id,
+                mode: CopyMode::Full,
+                paste,
+            }),
+            RowAction::CopyOnly => {
+                if let Err(e) = clipboard::copy_entry(&self.paths, store, id, CopyMode::Full) {
+                    return self.error(format!("{e:#}"));
                 }
-                Ok(None) => Task::none(),
-                Err(e) => self.error(strings::footer_read_failed(&format!("{e:#}"))),
-            },
-            RowAction::CopyOnly => match store.content(id) {
-                Ok(Some(data)) => {
-                    if let Err(e) = clipboard::copy(Some(&row.mime), &data) {
-                        return self.error(format!("{e:#}"));
-                    }
-                    // `ingest` bumps the entry to the top; reflect that shortly.
-                    iced::Task::future(async {
-                        tokio::time::sleep(Duration::from_millis(300)).await
-                    })
-                    .map(|()| cosmic::Action::App(Message::Reload))
-                }
-                Ok(None) => Task::none(),
-                Err(e) => self.error(strings::footer_read_failed(&format!("{e:#}"))),
-            },
+                // `ingest` bumps the entry to the top; reflect that shortly.
+                iced::Task::future(async {
+                    tokio::time::sleep(Duration::from_millis(300)).await
+                })
+                .map(|()| cosmic::Action::App(Message::Reload))
+            }
             RowAction::PastePlain => {
                 if row.is_image() && row.ocr() == Ocr::Pending {
                     if self.ocr_engine_missing {
@@ -459,51 +434,36 @@ impl App {
                     return iced::Task::future(async move {
                         tokio::task::spawn_blocking(move || wait_for_ocr(&db, id))
                             .await
-                            .ok()
-                            .flatten()
+                            .unwrap_or(false)
                     })
-                    .map(move |t| cosmic::Action::App(Message::OcrWaited(id, t)));
+                    .map(move |ok| cosmic::Action::App(Message::OcrWaited(id, ok)));
                 }
                 if let Some(reason) = row.plain_disabled_reason() {
                     return self.error(reason);
                 }
-                let text = if row.is_image() {
-                    match store.summary(id) {
-                        Ok(Some(s)) => s.ocr_text.unwrap_or_default(),
-                        _ => String::new(),
-                    }
-                } else {
-                    match store.content(id) {
-                        Ok(Some(d)) => String::from_utf8_lossy(&d).into_owned(),
-                        _ => String::new(),
-                    }
-                };
-                self.paste_text(text)
+                self.close_and(Job::Entry {
+                    id,
+                    mode: CopyMode::Plain,
+                    paste,
+                })
             }
             RowAction::PasteNoMarkdown => {
                 if row.is_image() {
                     return self.error(strings::FOOTER_MARKDOWN_IMAGE);
                 }
-                let Ok(Some(d)) = store.content(id) else {
-                    return Task::none();
-                };
-                // TODO(backend): call `markdown::strip` once main lands it.
-                match strip_markdown(&String::from_utf8_lossy(&d)) {
-                    Some(text) => self.paste_text(text),
-                    None => self.error(strings::FOOTER_MARKDOWN_UNAVAILABLE),
-                }
+                self.close_and(Job::Entry {
+                    id,
+                    mode: CopyMode::NoMarkdown,
+                    paste,
+                })
             }
             RowAction::Delete => {
-                let (Ok(Some(summary)), Ok(Some(content))) = (store.summary(id), store.content(id))
-                else {
-                    return Task::none();
-                };
-                if let Err(e) = store.delete(id) {
-                    return self.error(format!("{e:#}"));
+                match store.delete(id) {
+                    Ok(true) => {}
+                    Ok(false) => return Task::none(),
+                    Err(e) => return self.error(format!("{e:#}")),
                 }
-                thumbs::remove(&self.paths.thumbs_dir, &[id]);
-                self.thumbs.remove(&id);
-                self.deleted = Some(Deleted { summary, content });
+                self.deleted = Some(id);
                 self.set_footer(Footer::Undo);
                 let t = self.reload();
                 self.clamp_selection();
@@ -512,73 +472,30 @@ impl App {
         }
     }
 
-    fn paste_text(&mut self, text: String) -> Task<Message> {
-        let paste = self.cfg.paste.paste_on_select;
-        self.close_and(Job {
-            mime: None,
-            data: text.into_bytes(),
-            paste,
-            restore: None,
-        })
-    }
-
     fn undo(&mut self) -> Task<Message> {
-        // TODO(backend): use `deleted_at` restore so the entry returns to its old position;
-        // re-upserting puts it at the top for now.
-        let Some(d) = self.deleted.take() else {
+        let Some(id) = self.deleted.take() else {
             return Task::none();
         };
-        let Some(store) = &mut self.store else {
+        let Some(store) = &self.store else {
             return Task::none();
         };
-        let dims = match (d.summary.width, d.summary.height) {
-            (Some(w), Some(h)) => Some((w, h)),
-            _ => None,
-        };
-        let r = store.upsert(&crate::store::NewEntry {
-            mime: &d.summary.mime,
-            content: &d.content,
-            dims,
-            ocr_status: d.summary.ocr_status,
-        });
-        if let Ok((id, _)) = r
-            && d.summary.ocr_status == OcrStatus::Done
-        {
-            let _ = store.set_ocr(id, OcrStatus::Done, d.summary.ocr_text.as_deref());
+        if let Err(e) = store.undelete(id) {
+            return self.error(format!("{e:#}"));
         }
         self.footer = None;
         self.reload()
     }
 
     fn paste_macro(&mut self, n: usize) -> Task<Message> {
-        let Some(m) = self.macros.get(n) else {
+        if n >= self.cfg.macros.items.len() {
             return Task::none();
-        };
-        let value = m.value();
-        if let Err(e) = macros::mark_skip(&value) {
-            crate::log(&format!("macro: could not write skip file: {e}"));
         }
-        let restore = if self.restore_clipboard && self.top_is_clipboard {
-            self.rows.first().and_then(|top| {
-                self.store
-                    .as_ref()
-                    .and_then(|s| s.content(top.id).ok().flatten())
-                    .map(|c| (top.mime.clone(), c))
-            })
-        } else {
-            None
-        };
-        self.close_and(Job {
-            mime: None,
-            data: value.into_bytes(),
-            paste: true,
-            restore,
-        })
+        self.close_and(Job::Macro(n + 1))
     }
 
     // ---- keys ---------------------------------------------------------------------------
 
-    fn on_key(&mut self, key: Key, mods: Modifiers, status: Status) -> Task<Message> {
+    fn on_key(&mut self, key: Key, mods: Modifiers, _status: Status) -> Task<Message> {
         if self.closing {
             return Task::none();
         }
@@ -629,29 +546,26 @@ impl App {
             Key::Named(Named::PageDown) => self.move_selection(list::ROWS_PER_PAGE as isize),
             Key::Named(Named::Home) if mods.control() => self.move_selection(isize::MIN / 2),
             Key::Named(Named::End) if mods.control() => self.move_selection(isize::MAX / 2),
-            Key::Named(Named::Enter) => {
-                // The search field never submits; every Enter arrives here once.
-                let _ = status;
-                match self.selected_item() {
-                    Some(Item::OlderFold) => {
-                        self.older_expanded = !self.older_expanded;
-                        Task::none()
-                    }
-                    Some(Item::Entry(i)) => {
-                        let action = if mods.control() {
-                            RowAction::CopyOnly
-                        } else if mods.shift() {
-                            RowAction::PastePlain
-                        } else if mods.alt() {
-                            RowAction::PasteNoMarkdown
-                        } else {
-                            RowAction::Paste
-                        };
-                        self.act(i, action)
-                    }
-                    _ => Task::none(),
+            // The search field never submits, so every Enter arrives here exactly once.
+            Key::Named(Named::Enter) => match self.selected_item() {
+                Some(Item::OlderFold) => {
+                    self.older_expanded = !self.older_expanded;
+                    Task::none()
                 }
-            }
+                Some(Item::Entry(i)) => {
+                    let action = if mods.control() {
+                        RowAction::CopyOnly
+                    } else if mods.shift() {
+                        RowAction::PastePlain
+                    } else if mods.alt() {
+                        RowAction::PasteNoMarkdown
+                    } else {
+                        RowAction::Paste
+                    };
+                    self.act(i, action)
+                }
+                _ => Task::none(),
+            },
             Key::Named(Named::Delete) if mods.shift() => match self.selected_row() {
                 Some(i) => self.act(i, RowAction::Delete),
                 None => Task::none(),
@@ -674,9 +588,6 @@ impl App {
                 Ok(cfg) => self.cfg = cfg,
                 Err(e) => crate::log(&format!("window: {e:#}")),
             }
-            let loaded = macros::load(&self.paths);
-            self.macros = loaded.macros;
-            self.restore_clipboard = loaded.restore_clipboard;
         }
         let t = self.reload();
         Task::batch([t, text_input::focus(SEARCH_ID.clone())])
@@ -725,7 +636,7 @@ impl App {
                 &self.thumbs,
                 banner,
             ),
-            list::macro_column(&self.macros),
+            list::macro_column(&self.cfg.macros.items),
         ]
         .spacing(8)
         .height(Length::Fill);
@@ -796,42 +707,46 @@ impl App {
 }
 
 /// The blocking half of close-and-paste: wait for the compositor to give focus back,
-/// then copy, paste, and optionally restore the previous clipboard.
-fn run_job(job: Job, paste_cfg: &PasteConfig) -> Result<(), JobError> {
+/// then copy and paste. Opens its own `Store`; the app's stays on the UI thread.
+fn run_job(job: Job, cfg: &Config, paths: &Paths) -> Result<(), JobError> {
     std::thread::sleep(CLOSE_WAIT);
-    // Same as `menu::copy_entry`, with the blob read before the surface went away.
-    clipboard::copy(job.mime.as_deref(), &job.data).map_err(|e| JobError::Copy(format!("{e:#}")))?;
-    if job.paste {
-        paste::send(paste_cfg, true).map_err(|e| JobError::Paste(format!("{e:#}")))?;
+    match job {
+        Job::Entry { id, mode, paste } => {
+            let store = Store::open(&paths.db).map_err(|e| JobError::Copy(format!("{e:#}")))?;
+            clipboard::copy_entry(paths, &store, id, mode)
+                .map_err(|e| JobError::Copy(format!("{e:#}")))?;
+            if paste {
+                paste::send(paths, &cfg.paste, true)
+                    .map_err(|e| JobError::Paste(format!("{e:#}")))?;
+            }
+            Ok(())
+        }
+        // `macros::run` pastes without the after-menu wait, so give it the same head start.
+        Job::Macro(n) => {
+            std::thread::sleep(paste::AFTER_MENU_WAIT);
+            macros::run(cfg, paths, n).map_err(|e| JobError::Paste(format!("{e:#}")))
+        }
     }
-    if let Some((mime, data)) = job.restore {
-        std::thread::sleep(RESTORE_WAIT);
-        let _ = clipboard::copy(Some(&mime), &data);
-    }
-    Ok(())
 }
 
-/// Poll the store for a finished OCR result, up to `OCR_WAIT`.
-fn wait_for_ocr(db: &std::path::Path, id: i64) -> Option<String> {
+/// Poll the store until the entry's OCR has finished, up to `OCR_WAIT`. True if text was found.
+fn wait_for_ocr(db: &std::path::Path, id: i64) -> bool {
     let deadline = Instant::now() + OCR_WAIT;
-    let store = Store::open(db).ok()?;
+    let Ok(store) = Store::open(db) else {
+        return false;
+    };
     loop {
         if let Ok(Some(s)) = store.summary(id)
             && s.ocr_status != OcrStatus::Pending
         {
-            return s.ocr_text.filter(|t| !t.trim().is_empty());
+            return s.ocr_status == OcrStatus::Done
+                && s.ocr_text.is_some_and(|t| !t.trim().is_empty());
         }
         if Instant::now() >= deadline {
-            return None;
+            return false;
         }
         std::thread::sleep(OCR_POLL);
     }
-}
-
-// TODO(backend): replace with `crate::markdown::strip` when main lands it. Returning
-// `None` keeps the action honest: nothing is pasted unstripped.
-fn strip_markdown(_text: &str) -> Option<String> {
-    None
 }
 
 fn map_event(e: iced::Event, status: Status, _id: window::Id) -> Option<Message> {
@@ -870,8 +785,10 @@ impl cosmic::Application for App {
             Ok(s) => (Some(s), None),
             Err(e) => (None, Some(format!("{e:#}"))),
         };
-        let service = crate::ui::service::status();
-        let loaded = macros::load(&flags.paths);
+        let (service_running, ocr_engine_missing) = match service::status(&flags.paths) {
+            Ok(s) => (true, s.ocr.is_none() && flags.cfg.ocr.engine != OcrEngineKind::Off),
+            Err(_) => (false, false),
+        };
         let settings = crate::ui::settings::State::new(&flags.cfg, &flags.paths, 0);
         let mut app = App {
             core,
@@ -894,11 +811,9 @@ impl cosmic::Application for App {
                 )
             }),
             page: Page::List,
-            macros: loaded.macros,
-            restore_clipboard: loaded.restore_clipboard,
             deleted: None,
-            service_running: service.running,
-            ocr_engine_missing: service.ocr_engine_missing,
+            service_running,
+            ocr_engine_missing,
             closing: false,
             settings,
         };
@@ -982,26 +897,28 @@ impl cosmic::Application for App {
                 Task::none()
             }
             Message::ThumbReady(_, None) => Task::none(),
-            Message::OcrWaited(id, text) => {
+            Message::OcrWaited(id, ok) => {
                 if self.closing {
                     return Task::none();
                 }
-                match text {
-                    Some(t) => self.paste_text(t),
-                    None => {
-                        let reason = self
-                            .rows
-                            .iter()
-                            .find(|r| r.id == id)
-                            .and_then(|r| r.plain_disabled_reason())
-                            .unwrap_or(strings::T_OCR_FAILED);
-                        let t = self.reload();
-                        self.set_footer(Footer::Error(reason.into()));
-                        t
-                    }
+                if ok {
+                    let paste = self.cfg.paste.paste_on_select;
+                    return self.close_and(Job::Entry {
+                        id,
+                        mode: CopyMode::Plain,
+                        paste,
+                    });
                 }
+                let t = self.reload();
+                let reason = self
+                    .rows
+                    .iter()
+                    .find(|r| r.id == id)
+                    .and_then(|r| r.plain_disabled_reason())
+                    .unwrap_or(strings::T_OCR_FAILED);
+                self.set_footer(Footer::Error(reason.into()));
+                t
             }
-            Message::Close => self.close(),
             Message::Done(result) => {
                 if let Err(e) = &result {
                     crate::log(&format!("window: {e:?}"));

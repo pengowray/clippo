@@ -4,11 +4,24 @@ use anyhow::Result;
 
 use crate::clipboard::paste as wl_paste;
 use crate::config::{Config, OcrEngineKind, Paths};
-use crate::store::{NewEntry, OcrStatus, Store};
+use crate::service;
+use crate::skip;
+use crate::store::{Format, NewEntry, OcrStatus, Store, content_hash};
 use crate::thumbs;
 
 pub const TEXT_MIME: &str = "text/plain;charset=utf-8";
+const HTML_MIME: &str = "text/html";
+const RTF_MIMES: [&str; 2] = ["text/rtf", "application/rtf"];
 const PASSWORD_HINT: &str = "x-kde-passwordManagerHint";
+
+/// Extra formats bigger than this are dropped and the copy is stored as plain.
+const MAX_FORMAT_BYTES: usize = 1024 * 1024;
+
+/// Tags whose presence means HTML carries formatting worth keeping (design 11.2).
+const RICH_HTML_TAGS: [&str; 20] = [
+    "b", "strong", "i", "em", "u", "s", "a", "h1", "h2", "h3", "h4", "h5", "h6", "ul", "ol",
+    "table", "img", "code", "pre", "blockquote",
+];
 
 /// Identify common image formats from their magic bytes.
 pub fn sniff_image(data: &[u8]) -> Option<&'static str> {
@@ -42,6 +55,48 @@ pub fn preferred_image_type(types: &[&str]) -> Option<String> {
         .map(|t| t.to_string())
 }
 
+/// Browsers wrap every copy in HTML; only HTML with real formatting is worth storing.
+pub fn html_has_formatting(html: &[u8]) -> bool {
+    let lower = String::from_utf8_lossy(html).to_ascii_lowercase();
+    if lower.contains("style=") {
+        return true;
+    }
+    // Whole tag names only: `<b` must not match `<br>` or `<body>`, nor `<s` match `<span>`.
+    lower.match_indices('<').any(|(i, _)| {
+        let rest = &lower[i + 1..];
+        RICH_HTML_TAGS.iter().any(|tag| {
+            rest.strip_prefix(tag)
+                .and_then(|after| after.chars().next())
+                .is_some_and(|c| c == '>' || c == '/' || c.is_whitespace())
+        })
+    })
+}
+
+/// The extra formats to keep from what the clipboard owner offers, for a text or image primary.
+pub fn extra_formats(types: &[&str], image: bool) -> Vec<Format> {
+    let fetch = |mime: &str| -> Option<Format> {
+        let content = wl_paste(&["--no-newline", "--type", mime])?;
+        (!content.is_empty() && content.len() <= MAX_FORMAT_BYTES).then(|| Format {
+            mime: mime.to_string(),
+            content,
+        })
+    };
+    let mut out = Vec::new();
+    if types.contains(&HTML_MIME)
+        && let Some(html) = fetch(HTML_MIME)
+        && (image || html_has_formatting(&html.content))
+    {
+        out.push(html);
+    }
+    if !image
+        && let Some(mime) = RTF_MIMES.iter().find(|m| types.contains(m))
+        && let Some(rtf) = fetch(mime)
+    {
+        out.push(rtf);
+    }
+    out
+}
+
 pub fn run(cfg: &Config, paths: &Paths) -> Result<()> {
     // wl-paste --watch sets CLIPBOARD_STATE; only then is it safe to query the
     // live clipboard. A manual `clippo ingest < file` just stores stdin.
@@ -55,9 +110,10 @@ pub fn run(cfg: &Config, paths: &Paths) -> Result<()> {
     std::io::stdin().read_to_end(&mut data)?;
 
     let mut mime = sniff_image(&data).map(str::to_string);
+    let mut types_str = String::new();
     if from_watch {
         let types_raw = wl_paste(&["--list-types"]).unwrap_or_default();
-        let types_str = String::from_utf8_lossy(&types_raw);
+        types_str = String::from_utf8_lossy(&types_raw).into_owned();
         let types: Vec<&str> = types_str.lines().map(str::trim).collect();
         if types.contains(&PASSWORD_HINT) {
             let hint = wl_paste(&["--no-newline", "--type", PASSWORD_HINT]).unwrap_or_default();
@@ -75,6 +131,7 @@ pub fn run(cfg: &Config, paths: &Paths) -> Result<()> {
             mime = Some(m.to_string());
         }
     }
+    let types: Vec<&str> = types_str.lines().map(str::trim).collect();
 
     let mut store = Store::open(&paths.db)?;
     match mime {
@@ -88,14 +145,20 @@ pub fn run(cfg: &Config, paths: &Paths) -> Result<()> {
             } else {
                 OcrStatus::Pending
             };
+            let formats = if from_watch {
+                extra_formats(&types, true)
+            } else {
+                Vec::new()
+            };
             store.upsert(&NewEntry {
                 mime: &mime,
                 content: &data,
                 dims,
                 ocr_status,
+                formats: &formats,
             })?;
             if ocr_status == OcrStatus::Pending {
-                crate::paste::notify_ocr();
+                service::notify_ocr(paths);
             }
         }
         None => {
@@ -105,15 +168,27 @@ pub fn run(cfg: &Config, paths: &Paths) -> Result<()> {
             if text.trim().is_empty() {
                 return Ok(());
             }
+            // A macro paste asked not to be recorded (see skip.rs).
+            if skip::take(&paths.runtime_dir, &content_hash(TEXT_MIME, &data)) {
+                return Ok(());
+            }
+            let formats = if from_watch {
+                extra_formats(&types, false)
+            } else {
+                Vec::new()
+            };
             store.upsert(&NewEntry {
                 mime: TEXT_MIME,
                 content: &data,
                 dims: None,
                 ocr_status: OcrStatus::None,
+                formats: &formats,
             })?;
         }
     }
-    let removed = store.enforce_cap(cfg.max_items)?;
+    let mut removed = store.enforce_cap(cfg.max_items)?;
+    removed.extend(store.expire(cfg.expire_days)?);
+    removed.extend(store.purge_deleted()?);
     thumbs::remove(&paths.thumbs_dir, &removed);
     Ok(())
 }
@@ -140,5 +215,21 @@ mod tests {
             Some("image/bmp")
         );
         assert_eq!(preferred_image_type(&["text/plain"]), None);
+    }
+
+    #[test]
+    fn html_formatting_test() {
+        // A browser's plain wrapper: no formatting.
+        assert!(!html_has_formatting(
+            b"<meta charset=\"utf-8\"><span>just words</span>"
+        ));
+        assert!(!html_has_formatting(b"<script>x</script><style>y</style>"));
+        assert!(!html_has_formatting(b"<html><body>line<br>two</body></html>"));
+        assert!(html_has_formatting(b"<p>a <B>bold</B> word</p>"));
+        assert!(html_has_formatting(b"<a href=\"x\">link</a>"));
+        assert!(html_has_formatting(b"<span style=\"color:red\">x</span>"));
+        assert!(html_has_formatting(b"<img src=\"x.png\" alt=\"pic\">"));
+        assert!(html_has_formatting(b"<s>struck</s>"));
+        assert!(html_has_formatting(b"<h2>Title</h2>"));
     }
 }

@@ -9,7 +9,7 @@ use cosmic::widget::{self, button, column, container, mouse_area, row, text, too
 use cosmic::{Element, Theme, theme};
 
 use crate::ui::app::{App, Item, MACRO_COLUMN_WIDTH, Message, RowAction};
-use crate::ui::macros::Macro;
+use crate::config::Macro;
 use crate::ui::rows::{Kind, Ocr, Row};
 use crate::ui::strings;
 
@@ -301,7 +301,14 @@ fn entry<'a>(
     .on_press(Message::Activate(pos))
     .on_enter(Message::Hover(Some(pos)))
     .on_exit(Message::Hover(None));
-    widget::context_menu(area, Some(context_items(idx, r))).into()
+    let with_menu = widget::context_menu(area, Some(context_items(idx, r)));
+    // Relative time lives in the tooltip, not the row (design 3.3).
+    let mut when = strings::copied_ago(r.last_used, crate::store::now_ms());
+    if let Some(bytes) = r.size_bytes {
+        when.push_str(" · ");
+        when.push_str(&strings::size_label(bytes));
+    }
+    tooltip(with_menu, text::caption(when), tooltip::Position::FollowCursor).into()
 }
 
 /// Right-click menu action: which row, and what to do with it.
@@ -441,8 +448,9 @@ pub fn macro_column<'a>(macros: &'a [Macro]) -> Element<'a, Message> {
     let mut col = column![text::heading(strings::MACRO_HEADING)]
         .spacing(8)
         .width(MACRO_COLUMN_WIDTH);
+    let now = chrono::Local::now();
     for (i, m) in macros.iter().enumerate() {
-        let value = m.value();
+        let value = crate::macros::render(m, &now).unwrap_or_else(|e| format!("({e})"));
         let key = strings::macro_key(i + 1);
         let label: Element<'a, Message> = match &m.label {
             Some(l) => column![text(l.clone()), muted(value).size(12)].into(),

@@ -85,8 +85,6 @@ pub const FOOTER_MARKDOWN_IMAGE: &str = "Only text entries can have Markdown rem
 pub fn footer_read_failed(err: &str) -> String {
     format!("Couldn't read history: {err}")
 }
-/// Not in the design: shown until the backend's Markdown stripper lands.
-pub const FOOTER_MARKDOWN_UNAVAILABLE: &str = "Paste without Markdown isn't available yet";
 pub const SETTINGS_TITLE: &str = "Settings";
 pub const SETTINGS_BACK: &str = "Back";
 pub const RESET_TO_DEFAULTS: &str = "Reset to defaults";

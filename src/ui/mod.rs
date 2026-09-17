@@ -2,10 +2,8 @@
 
 pub mod app;
 pub mod list;
-pub mod macros;
 pub mod notify;
 pub mod rows;
-pub mod service;
 pub mod settings;
 pub mod strings;
 
@@ -15,17 +13,14 @@ use anyhow::{Context, Result};
 
 use crate::config::{Config, Paths};
 
-fn pid_file() -> PathBuf {
-    std::env::var_os("XDG_RUNTIME_DIR")
-        .map_or_else(std::env::temp_dir, PathBuf::from)
-        .join("clippo")
-        .join("window.pid")
+fn pid_file(paths: &Paths) -> PathBuf {
+    paths.runtime_dir.join("window.pid")
 }
 
 /// If another `clippo window` is open, close it (toggle) and return `true`.
 // TODO(backend): replace with the socket `menu toggle` once `clippo watch` hosts the window.
-fn toggle_existing() -> bool {
-    let path = pid_file();
+fn toggle_existing(paths: &Paths) -> bool {
+    let path = pid_file(paths);
     let Ok(s) = std::fs::read_to_string(&path) else {
         return false;
     };
@@ -55,10 +50,10 @@ impl Drop for PidGuard {
 
 /// Open the window in this process, or close an already open one.
 pub fn run(cfg: &Config, paths: &Paths) -> Result<()> {
-    if toggle_existing() {
+    if toggle_existing(paths) {
         return Ok(());
     }
-    let path = pid_file();
+    let path = pid_file(paths);
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
     }
