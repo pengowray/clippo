@@ -10,6 +10,7 @@
 //! | `copy <id> [plain\|nomd]` | `ok` | Put an entry on the clipboard, served with every stored format |
 //! | `status` | `ok ocr=<engine\|none> watching=1 items=<n> pending=<n>` | Engine in use and counts |
 //! | `reload` | `ok` | Re-read the config file |
+//! | `menu toggle` | `ok` | Show or hide the history window hosted by the service |
 
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
@@ -88,6 +89,11 @@ pub fn reload(paths: &Paths) -> Result<()> {
     request(paths, "reload").map(drop)
 }
 
+/// Ask the service to show or hide its history window.
+pub fn menu_toggle(paths: &Paths) -> Result<()> {
+    request(paths, "menu toggle").map(drop)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Status {
     /// Engine the service would use for new images, if any.
@@ -133,6 +139,8 @@ pub fn status(paths: &Paths) -> Result<Status> {
 pub struct Shared {
     pub cfg: RwLock<Config>,
     pub paths: Paths,
+    /// Show or hide the resident history window (`menu toggle`); `None` without a display.
+    pub menu_toggle: Option<Box<dyn Fn() + Send + Sync>>,
 }
 
 impl Shared {
@@ -225,6 +233,15 @@ impl Server {
                 let cfg = Config::load(&self.shared.paths)?;
                 *self.shared.cfg.write().unwrap_or_else(|e| e.into_inner()) = cfg;
                 let _ = self.wake_ocr.send(());
+                Ok(String::new())
+            }
+            Some("menu") if words.next() == Some("toggle") => {
+                let toggle = self
+                    .shared
+                    .menu_toggle
+                    .as_ref()
+                    .ok_or_else(|| anyhow!("the service has no window (no Wayland display)"))?;
+                toggle();
                 Ok(String::new())
             }
             _ => bail!("bad request"),

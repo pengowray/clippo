@@ -3,9 +3,12 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::pin::Pin;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use cosmic::app::{Core, Task};
+use cosmic::iced::futures::{self, Stream, StreamExt};
 use cosmic::iced::event::Status;
 use cosmic::iced::keyboard::key::Named;
 use cosmic::iced::keyboard::{Key, Modifiers};
@@ -55,6 +58,25 @@ pub static SCROLL_ID: std::sync::LazyLock<widget::Id> =
 pub struct Flags {
     pub cfg: Config,
     pub paths: Paths,
+    /// Resident mode: stay hidden until the service asks, and hide instead of exiting.
+    pub toggles: Option<crate::ui::ToggleReceiver>,
+}
+
+/// The toggle receiver, handed to the subscription once. Hashes as a constant so iced keeps
+/// one stream alive for the app's lifetime.
+struct ToggleSource(Arc<Mutex<Option<crate::ui::ToggleReceiver>>>);
+
+impl std::hash::Hash for ToggleSource {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        "clippo-menu-toggle".hash(state);
+    }
+}
+
+fn toggle_stream(src: &ToggleSource) -> Pin<Box<dyn Stream<Item = Message> + Send>> {
+    match src.0.lock().ok().and_then(|mut rx| rx.take()) {
+        Some(rx) => Box::pin(rx.map(|()| Message::Toggle)),
+        None => Box::pin(futures::stream::pending()),
+    }
 }
 
 /// One line of the list: an entry, the fold row, or the search-results divider.
@@ -128,6 +150,8 @@ pub enum Message {
     Reload,
     ThumbReady(i64, Option<PathBuf>),
     OcrWaited(i64, bool),
+    /// `menu toggle` from the service (resident mode).
+    Toggle,
     Done(Result<(), JobError>),
     OpenSettings,
     CloseSettings,
@@ -157,6 +181,9 @@ pub struct App {
     service_running: bool,
     ocr_engine_missing: bool,
     closing: bool,
+    /// Resident mode: the surface comes and goes; the process stays.
+    toggles: Option<ToggleSource>,
+    mapped: bool,
     pub settings: crate::ui::settings::State,
 }
 
@@ -378,16 +405,75 @@ impl App {
         Task::none()
     }
 
-    // ---- closing and pasting --------------------------------------------------------------
+    // ---- showing, closing and pasting -----------------------------------------------------
 
-    fn close(&mut self) -> Task<Message> {
-        self.closing = true;
-        Task::batch([destroy_layer_surface(self.surface), iced::exit()])
+    fn resident(&self) -> bool {
+        self.toggles.is_some()
     }
 
-    /// Unmap the surface, then run `job` on a blocking thread, then exit.
+    /// Map the overlay with fresh state: top row selected, no search, older rows folded.
+    fn show(&mut self) -> Task<Message> {
+        if self.mapped {
+            return Task::none();
+        }
+        self.mapped = true;
+        self.closing = false;
+        self.query.clear();
+        self.selected = 0;
+        self.hovered = None;
+        self.older_expanded = false;
+        self.footer = None;
+        self.deleted = None;
+        self.page = Page::List;
+        if self.resident() {
+            // The service may have reloaded the config since the last open.
+            if let Ok(cfg) = Config::load(&self.paths) {
+                self.cfg = cfg;
+            }
+            let (running, missing) = service_status(&self.cfg, &self.paths);
+            self.service_running = running;
+            self.ocr_engine_missing = missing;
+        }
+        let load = self.reload();
+        let surface = self.surface;
+        let show = cosmic::surface::surface_task(simple_layer_shell::<Message>(
+            LiveSettings::default,
+            move || SctkLayerSurfaceSettings {
+                id: surface,
+                layer: Layer::Overlay,
+                keyboard_interactivity: KeyboardInteractivity::Exclusive,
+                anchor: Anchor::empty(),
+                output: IcedOutput::Active,
+                namespace: "clippo".into(),
+                size: Some((Some(WIDTH), Some(HEIGHT))),
+                size_limits: Limits::NONE
+                    .min_width(WIDTH as f32)
+                    .max_width(WIDTH as f32)
+                    .min_height(HEIGHT as f32)
+                    .max_height(HEIGHT as f32),
+                exclusive_zone: -1,
+                ..Default::default()
+            },
+            None::<fn() -> Element<'static, cosmic::Action<Message>>>,
+        ));
+        Task::batch([show, load])
+    }
+
+    /// Unmap the overlay; in resident mode the process stays, otherwise it exits.
+    fn close(&mut self) -> Task<Message> {
+        self.closing = true;
+        self.mapped = false;
+        if self.resident() {
+            destroy_layer_surface(self.surface)
+        } else {
+            Task::batch([destroy_layer_surface(self.surface), iced::exit()])
+        }
+    }
+
+    /// Unmap the surface, then run `job` on a blocking thread, then exit (or, resident, stay).
     fn close_and(&mut self, job: Job) -> Task<Message> {
         self.closing = true;
+        self.mapped = false;
         let cfg = self.cfg.clone();
         let paths = self.paths.clone();
         let run = iced::Task::future(async move {
@@ -749,6 +835,14 @@ fn wait_for_ocr(db: &std::path::Path, id: i64) -> bool {
     }
 }
 
+/// (service running, OCR on but no engine) for the banners (design 7.3).
+fn service_status(cfg: &Config, paths: &Paths) -> (bool, bool) {
+    match service::status(paths) {
+        Ok(s) => (true, s.ocr.is_none() && cfg.ocr.engine != OcrEngineKind::Off),
+        Err(_) => (false, false),
+    }
+}
+
 fn map_event(e: iced::Event, status: Status, _id: window::Id) -> Option<Message> {
     match e {
         iced::Event::Keyboard(iced::keyboard::Event::KeyPressed { key, modifiers, .. }) => {
@@ -785,9 +879,11 @@ impl cosmic::Application for App {
             Ok(s) => (Some(s), None),
             Err(e) => (None, Some(format!("{e:#}"))),
         };
-        let (service_running, ocr_engine_missing) = match service::status(&flags.paths) {
-            Ok(s) => (true, s.ocr.is_none() && flags.cfg.ocr.engine != OcrEngineKind::Off),
-            Err(_) => (false, false),
+        let resident = flags.toggles.is_some();
+        let (service_running, ocr_engine_missing) = if resident {
+            (true, false)
+        } else {
+            service_status(&flags.cfg, &flags.paths)
         };
         let settings = crate::ui::settings::State::new(&flags.cfg, &flags.paths, 0);
         let mut app = App {
@@ -815,38 +911,31 @@ impl cosmic::Application for App {
             service_running,
             ocr_engine_missing,
             closing: false,
+            toggles: flags
+                .toggles
+                .map(|rx| ToggleSource(Arc::new(Mutex::new(Some(rx))))),
+            mapped: false,
             settings,
         };
-        let load = app.reload();
-        let show = cosmic::surface::surface_task(simple_layer_shell::<Message>(
-            LiveSettings::default,
-            move || SctkLayerSurfaceSettings {
-                id: surface,
-                layer: Layer::Overlay,
-                keyboard_interactivity: KeyboardInteractivity::Exclusive,
-                anchor: Anchor::empty(),
-                output: IcedOutput::Active,
-                namespace: "clippo".into(),
-                size: Some((Some(WIDTH), Some(HEIGHT))),
-                size_limits: Limits::NONE
-                    .min_width(WIDTH as f32)
-                    .max_width(WIDTH as f32)
-                    .min_height(HEIGHT as f32)
-                    .max_height(HEIGHT as f32),
-                exclusive_zone: -1,
-                ..Default::default()
-            },
-            None::<fn() -> Element<'static, cosmic::Action<Message>>>,
-        ));
-        (app, Task::batch([show, load]))
+        // Resident: stay hidden until the first `menu toggle`.
+        let task = if resident { Task::none() } else { app.show() };
+        (app, task)
     }
 
     fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::Key(key, mods, status) => self.on_key(key, mods, status),
-            Message::Layer(LayerEvent::Focused, id) if id == self.surface => {
-                text_input::focus(SEARCH_ID.clone())
-            }
+            Message::Layer(LayerEvent::Focused, id) if id == self.surface => Task::batch([
+                text_input::focus(SEARCH_ID.clone()),
+                // A reused scrollable can keep an old offset; every open starts at the top.
+                snap_to(
+                    SCROLL_ID.clone(),
+                    RelativeOffset {
+                        x: None,
+                        y: Some(0.0),
+                    },
+                ),
+            ]),
             Message::Layer(_, _) => Task::none(),
             Message::Query(q) => {
                 self.query = q;
@@ -919,15 +1008,24 @@ impl cosmic::Application for App {
                 self.set_footer(Footer::Error(reason.into()));
                 t
             }
+            Message::Toggle => {
+                if self.mapped {
+                    self.close()
+                } else {
+                    self.show()
+                }
+            }
             Message::Done(result) => {
                 if let Err(e) = &result {
                     crate::log(&format!("window: {e:?}"));
                 }
                 let key = self.cfg.paste.keys;
-                Task::batch([
-                    crate::ui::notify::after_close(result, key),
-                    iced::exit(),
-                ])
+                let notify = crate::ui::notify::after_close(result, key);
+                if self.resident() {
+                    notify
+                } else {
+                    Task::batch([notify, iced::exit()])
+                }
             }
             Message::OpenSettings => self.open_settings(),
             Message::CloseSettings => self.close_settings(),
@@ -943,10 +1041,18 @@ impl cosmic::Application for App {
     }
 
     fn subscription(&self) -> Subscription<Message> {
-        Subscription::batch([
-            iced::event::listen_raw(map_event),
-            iced::time::every(Duration::from_secs(1)).map(|_| Message::Tick),
-        ])
+        let mut subs = vec![iced::event::listen_raw(map_event)];
+        if self.mapped {
+            // Macro values and footer expiry only matter while the window is visible.
+            subs.push(iced::time::every(Duration::from_secs(1)).map(|_| Message::Tick));
+        }
+        if let Some(src) = &self.toggles {
+            subs.push(Subscription::run_with(
+                ToggleSource(Arc::clone(&src.0)),
+                toggle_stream,
+            ));
+        }
+        Subscription::batch(subs)
     }
 
     fn view(&self) -> Element<'_, Message> {

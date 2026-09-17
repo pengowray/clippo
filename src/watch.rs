@@ -31,9 +31,18 @@ pub fn run(cfg: &Config, paths: &Paths) -> Result<()> {
     }
     let mut child = cmd.spawn().context("could not run wl-paste")?;
 
+    // The history window lives in this process (design 1). Its toolkit needs the main
+    // thread, so wl-paste is then watched from another one.
+    let window = std::env::var_os("WAYLAND_DISPLAY")
+        .is_some()
+        .then(crate::ui::toggle_channel);
     let shared = Arc::new(Shared {
         cfg: RwLock::new(cfg.clone()),
         paths: paths.clone(),
+        menu_toggle: window.as_ref().map(|(tx, _)| {
+            let tx = tx.clone();
+            Box::new(move || tx.toggle()) as Box<dyn Fn() + Send + Sync>
+        }),
     });
     let (wake_ocr, wakeups) = std::sync::mpsc::channel();
     let worker_shared = Arc::clone(&shared);
@@ -44,8 +53,20 @@ pub fn run(cfg: &Config, paths: &Paths) -> Result<()> {
         }
     });
 
-    let status = child.wait()?;
-    bail!("clipboard watching stopped: wl-paste exited ({status})");
+    let Some((_, toggles)) = window else {
+        let status = child.wait()?;
+        bail!("clipboard watching stopped: wl-paste exited ({status})");
+    };
+    thread::spawn(move || {
+        let msg = match child.wait() {
+            Ok(s) => format!("clipboard watching stopped: wl-paste exited ({s})"),
+            Err(e) => format!("clipboard watching stopped: {e}"),
+        };
+        eprintln!("clippo: {msg}");
+        crate::log(&msg);
+        std::process::exit(1);
+    });
+    crate::ui::run_resident(cfg, paths, toggles)
 }
 
 /// The OCR engine, plus the settings it was built from so a `reload` can replace it.

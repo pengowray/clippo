@@ -10,6 +10,7 @@ pub mod strings;
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
+use cosmic::iced::futures::channel::mpsc::{UnboundedReceiver, UnboundedSender, unbounded};
 
 use crate::config::{Config, Paths};
 
@@ -48,8 +49,37 @@ impl Drop for PidGuard {
     }
 }
 
-/// Open the window in this process, or close an already open one.
+/// Show-or-hide requests from the service socket to the resident window.
+#[derive(Clone)]
+pub struct ToggleSender(UnboundedSender<()>);
+
+impl ToggleSender {
+    pub fn toggle(&self) {
+        let _ = self.0.unbounded_send(());
+    }
+}
+
+pub type ToggleReceiver = UnboundedReceiver<()>;
+
+pub fn toggle_channel() -> (ToggleSender, ToggleReceiver) {
+    let (tx, rx) = unbounded();
+    (ToggleSender(tx), rx)
+}
+
+fn settings() -> cosmic::app::Settings {
+    cosmic::app::Settings::default()
+        .no_main_window(true)
+        .exit_on_close(false)
+        .client_decorations(true)
+}
+
+/// Toggle the window: through the running service when it hosts one, else in this process.
 pub fn run(cfg: &Config, paths: &Paths) -> Result<()> {
+    match crate::service::menu_toggle(paths) {
+        Ok(()) => return Ok(()),
+        // Not running, or an older service without a window: open one here instead.
+        Err(e) => crate::log(&format!("window: {e:#}; opening in-process")),
+    }
     if toggle_existing(paths) {
         return Ok(());
     }
@@ -59,17 +89,27 @@ pub fn run(cfg: &Config, paths: &Paths) -> Result<()> {
     }
     std::fs::write(&path, std::process::id().to_string())?;
     let _guard = PidGuard(path);
-
-    let settings = cosmic::app::Settings::default()
-        .no_main_window(true)
-        .exit_on_close(false)
-        .client_decorations(true);
     cosmic::app::run::<app::App>(
-        settings,
+        settings(),
         app::Flags {
             cfg: cfg.clone(),
             paths: paths.clone(),
+            toggles: None,
         },
     )
     .context("could not open the clipboard window")
+}
+
+/// Host the window inside `clippo watch`: hidden until a `menu toggle` arrives. Runs until
+/// the process exits.
+pub fn run_resident(cfg: &Config, paths: &Paths, toggles: ToggleReceiver) -> Result<()> {
+    cosmic::app::run::<app::App>(
+        settings(),
+        app::Flags {
+            cfg: cfg.clone(),
+            paths: paths.clone(),
+            toggles: Some(toggles),
+        },
+    )
+    .context("could not start the clipboard window")
 }
