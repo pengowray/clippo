@@ -21,6 +21,18 @@ sha2 = "0.11.0"
 toml = "1.1.6"
 wayland-client = "0.31"
 wayland-protocols-misc = { version = "0.3", features = ["client"] }
+chrono = "0.4"
+toml_edit = "0.25"
+zbus = { version = "5.15", default-features = false, features = ["tokio"] }
+tokio = { version = "1.52", features = ["rt", "sync", "time"] }
+libcosmic = { git = "https://github.com/pop-os/libcosmic", default-features = false, features = [
+    "autosize",
+    "dbus-config",
+    "tokio",
+    "wayland",
+    "multi-window",
+    "winit",
+] }
 
 # Dependencies (ocrs/rten especially) are unusably slow unoptimised.
 [profile.dev.package."*"]

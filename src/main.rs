@@ -8,6 +8,7 @@ mod plain;
 mod store;
 mod vkbd;
 mod thumbs;
+mod ui;
 mod watch;
 
 use std::io::{Read, Write};
@@ -39,6 +40,8 @@ enum Cmd {
     Ingest,
     /// Open the history picker; selecting an entry copies it, and pastes it if `paste.paste_on_select` is on
     Menu,
+    /// Open the clipboard history window (replaces `menu` once finished)
+    Window,
     /// Replace the clipboard with plain text (recognised text for images), then paste it
     Plain {
         /// Paste after replacing the clipboard, even if `paste.auto_paste` is off
@@ -106,6 +109,7 @@ fn run(cli: Cli) -> Result<()> {
         Cmd::Watch => watch::run(&cfg, &paths),
         Cmd::Ingest => ingest::run(&cfg, &paths),
         Cmd::Menu => menu::run(&cfg, &Store::open(&paths.db)?, &paths),
+        Cmd::Window => ui::run(&cfg, &paths),
         Cmd::Plain { paste, no_paste } => {
             plain::run(&cfg, &paths, paste || (cfg.paste.auto_paste && !no_paste))
         }
