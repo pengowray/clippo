@@ -176,11 +176,9 @@ sit behind one row at the bottom:
 - **Search always includes older entries.** Matches are listed recent first, then a
   non-interactive divider row `Older (not used in the last day)`, then older matches. The
   count reads `12 of 1000 match`. The divider is not shown when there are no older matches.
-- Optional expiry: setting `Delete items not used for` (section 10, History), default
-  **off**. Recommended default is off: the item cap already bounds the database, and a
-  clipboard manager that quietly loses things is worse than one that keeps them behind a
-  fold. On by default, set to 7 days. Expiry runs in `ingest` alongside
-  `enforce_cap`.
+- Expiry: setting `Delete items not used for` (section 10, History), on by default, set
+  to 7 days. Turning it off keeps everything up to the item cap. Expiry runs in `ingest`
+  alongside `enforce_cap`.
 
 ### 3.5 Markdown detection
 
