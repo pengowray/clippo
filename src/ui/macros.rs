@@ -32,10 +32,54 @@ pub fn defaults() -> Vec<Macro> {
         .collect()
 }
 
-// TODO(backend): load `[[macros]]` from `Config` once main adds it; `defaults()` is the
-// fallback when the config has none.
-pub fn from_config(_cfg: &crate::config::Config) -> Vec<Macro> {
-    defaults()
+/// Macro settings as read from the config file.
+pub struct Loaded {
+    pub macros: Vec<Macro>,
+    /// Re-copy the previous clipboard entry after a macro paste (design 9).
+    pub restore_clipboard: bool,
+}
+
+/// `[[macros.items]]` from a parsed config file; `None` when it has none.
+pub fn read_from_doc(doc: &toml_edit::DocumentMut) -> Option<Vec<Macro>> {
+    let items = doc
+        .get("macros")?
+        .get("items")?
+        .as_array_of_tables()?;
+    Some(
+        items
+            .iter()
+            .filter_map(|t| {
+                Some(Macro {
+                    format: t.get("format")?.as_str()?.to_string(),
+                    label: t
+                        .get("label")
+                        .and_then(toml_edit::Item::as_str)
+                        .map(str::to_string),
+                })
+            })
+            .collect(),
+    )
+}
+
+// TODO(backend): read these from `Config` once main adds `[macros]` to it. Until then the
+// settings page writes them with toml_edit and this reads them back the same way.
+pub fn load(paths: &crate::config::Paths) -> Loaded {
+    let doc = std::fs::read_to_string(&paths.config_file)
+        .ok()
+        .and_then(|s| s.parse::<toml_edit::DocumentMut>().ok());
+    let macros = doc
+        .as_ref()
+        .and_then(read_from_doc)
+        .filter(|m| !m.is_empty())
+        .unwrap_or_else(defaults);
+    let restore_clipboard = doc
+        .as_ref()
+        .and_then(|d| d.get("macros")?.get("restore_clipboard")?.as_bool())
+        .unwrap_or(true);
+    Loaded {
+        macros: macros.into_iter().take(MAX_MACROS).collect(),
+        restore_clipboard,
+    }
 }
 
 fn skip_file() -> PathBuf {

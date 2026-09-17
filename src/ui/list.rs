@@ -292,7 +292,7 @@ fn entry<'a>(
         .spacing(ROW_PADDING - 3)
         .align_y(Alignment::Start);
 
-    mouse_area(
+    let area = mouse_area(
         container(content)
             .padding([8, ROW_PADDING, 8, 0])
             .width(Length::Fill)
@@ -300,8 +300,60 @@ fn entry<'a>(
     )
     .on_press(Message::Activate(pos))
     .on_enter(Message::Hover(Some(pos)))
-    .on_exit(Message::Hover(None))
-    .into()
+    .on_exit(Message::Hover(None));
+    widget::context_menu(area, Some(context_items(idx, r))).into()
+}
+
+/// Right-click menu action: which row, and what to do with it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RowMenu {
+    idx: usize,
+    action: RowAction,
+}
+
+impl widget::menu::Action for RowMenu {
+    type Message = Message;
+    fn message(&self) -> Message {
+        Message::Act(self.idx, self.action)
+    }
+}
+
+/// Design 6: a stable shape; unavailable items are greyed, not hidden.
+fn context_items(idx: usize, r: &Row) -> Vec<widget::menu::Tree<Message>> {
+    use widget::menu::{Item as MenuItem, items};
+    let act = |action| RowMenu { idx, action };
+    let plain_ok = r.plain_disabled_reason().is_none();
+    let mut list = vec![MenuItem::Button(
+        strings::MENU_PASTE,
+        None,
+        act(RowAction::Paste),
+    )];
+    list.push(if plain_ok {
+        MenuItem::Button(strings::PASTE_AS_PLAIN_TEXT, None, act(RowAction::PastePlain))
+    } else {
+        MenuItem::ButtonDisabled(strings::PASTE_AS_PLAIN_TEXT, None, act(RowAction::PastePlain))
+    });
+    list.push(if r.is_image() {
+        MenuItem::ButtonDisabled(
+            strings::PASTE_WITHOUT_MARKDOWN,
+            None,
+            act(RowAction::PasteNoMarkdown),
+        )
+    } else {
+        MenuItem::Button(
+            strings::PASTE_WITHOUT_MARKDOWN,
+            None,
+            act(RowAction::PasteNoMarkdown),
+        )
+    });
+    list.push(MenuItem::Button(
+        strings::MENU_COPY_ONLY,
+        None,
+        act(RowAction::CopyOnly),
+    ));
+    list.push(MenuItem::Divider);
+    list.push(MenuItem::Button(strings::DELETE, None, act(RowAction::Delete)));
+    items(&HashMap::new(), list)
 }
 
 fn thumbnail<'a>(thumb: Option<&'a widget::image::Handle>, r: &'a Row) -> Element<'a, Message> {

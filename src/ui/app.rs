@@ -159,6 +159,7 @@ pub struct App {
     footer: Option<(Footer, Instant)>,
     page: Page,
     macros: Vec<Macro>,
+    restore_clipboard: bool,
     deleted: Option<Deleted>,
     service_running: bool,
     ocr_engine_missing: bool,
@@ -557,8 +558,7 @@ impl App {
         if let Err(e) = macros::mark_skip(&value) {
             crate::log(&format!("macro: could not write skip file: {e}"));
         }
-        // TODO(backend): `macros.restore_clipboard` setting; on by default (design 9).
-        let restore = if self.top_is_clipboard {
+        let restore = if self.restore_clipboard && self.top_is_clipboard {
             self.rows.first().and_then(|top| {
                 self.store
                     .as_ref()
@@ -669,9 +669,14 @@ impl App {
     fn close_settings(&mut self) -> Task<Message> {
         self.page = Page::List;
         // Settings may have changed the list (Delete all) or paste behaviour.
-        if let Some(cfg) = self.settings.take_config() {
-            self.cfg = cfg;
-            self.macros = macros::from_config(&self.cfg);
+        if self.settings.changed {
+            match Config::load(&self.paths) {
+                Ok(cfg) => self.cfg = cfg,
+                Err(e) => crate::log(&format!("window: {e:#}")),
+            }
+            let loaded = macros::load(&self.paths);
+            self.macros = loaded.macros;
+            self.restore_clipboard = loaded.restore_clipboard;
         }
         let t = self.reload();
         Task::batch([t, text_input::focus(SEARCH_ID.clone())])
@@ -866,7 +871,7 @@ impl cosmic::Application for App {
             Err(e) => (None, Some(format!("{e:#}"))),
         };
         let service = crate::ui::service::status();
-        let macros = macros::from_config(&flags.cfg);
+        let loaded = macros::load(&flags.paths);
         let settings = crate::ui::settings::State::new(&flags.cfg, &flags.paths, 0);
         let mut app = App {
             core,
@@ -889,7 +894,8 @@ impl cosmic::Application for App {
                 )
             }),
             page: Page::List,
-            macros,
+            macros: loaded.macros,
+            restore_clipboard: loaded.restore_clipboard,
             deleted: None,
             service_running: service.running,
             ocr_engine_missing: service.ocr_engine_missing,

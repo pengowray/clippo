@@ -89,6 +89,57 @@ pub fn footer_read_failed(err: &str) -> String {
 pub const FOOTER_MARKDOWN_UNAVAILABLE: &str = "Paste without Markdown isn't available yet";
 pub const SETTINGS_TITLE: &str = "Settings";
 pub const SETTINGS_BACK: &str = "Back";
+pub const RESET_TO_DEFAULTS: &str = "Reset to defaults";
+pub const RESET_CONFIRM: &str = "Reset all settings to defaults?";
+pub const RESET: &str = "Reset";
+pub const CANCEL: &str = "Cancel";
+pub const SECTION_HISTORY: &str = "History";
+pub const KEEP_UP_TO: &str = "Keep up to";
+pub const SUFFIX_ITEMS: &str = "items";
+pub const DELETE_NOT_USED_FOR: &str = "Delete items not used for";
+pub const SUFFIX_DAYS: &str = "days";
+pub const EXPIRE_HELP: &str = "Off keeps everything up to the item limit.";
+pub const DELETE_ALL_HISTORY: &str = "Delete all history";
+pub fn delete_all_confirm(count: &str) -> String {
+    format!("Delete all {count} items? This can't be undone.")
+}
+pub const DELETE_ALL: &str = "Delete all";
+pub const SECTION_PASTE: &str = "Paste";
+pub const PASTE_AFTER_PICKING: &str = "Paste after picking an item";
+pub const PASTE_AFTER_PLAIN: &str = "Paste after Paste as plain text (Super+Alt+V)";
+pub const PLAIN_STRIPS_MARKDOWN: &str = "Super+Alt+V also removes Markdown syntax";
+pub const PLAIN_STRIPS_MARKDOWN_HELP: &str = "Only when the text looks like Markdown. Super+V's \"Paste as plain text\" never removes Markdown; use \"Paste without Markdown\" there.";
+pub const PASTE_BY_PRESSING: &str = "Paste by pressing";
+pub const RESTORE_CLIPBOARD: &str = "Restore the previous clipboard after a macro";
+pub const ADVANCED: &str = "Advanced";
+pub const HOW_KEYS_ARE_SENT: &str = "How keys are sent";
+pub const UINPUT_HELP: &str =
+    "uinput needs /dev/uinput to be writable. On Pop!_OS, install the steam-devices package.";
+pub const WAIT_BEFORE_PASTING: &str = "Wait before pasting (uinput only)";
+pub const SUFFIX_MS: &str = "ms";
+pub const RELEASE_MODIFIERS: &str = "Release Super and Alt first (uinput only)";
+pub const SECTION_OCR: &str = "Text in images (OCR)";
+pub const READ_TEXT_IN_IMAGES: &str = "Read text in copied images";
+pub const OCR_STATUS_BUILTIN: &str = "Using built-in engine";
+pub fn ocr_status_tesseract(lang: &str) -> String {
+    format!("Using Tesseract ({lang})")
+}
+pub const OCR_STATUS_NONE: &str =
+    "No engine installed. Images are kept, text is read once an engine is set up.";
+pub const OCR_STATUS_OFF: &str = "Off";
+pub const SETUP_BUILTIN: &str = "Set up built-in engine";
+pub const DOWNLOADING: &str = "Downloading...";
+pub const INSTALLED: &str = "Installed";
+pub const TESSERACT_LANGUAGE: &str = "Tesseract language";
+pub const SECTION_MACROS: &str = "Macros";
+pub const MACRO_FORMAT: &str = "Format";
+pub const MACRO_LABEL: &str = "Label";
+pub const ADD_MACRO: &str = "Add macro";
+pub const FORMAT_CODES: &str = "Format codes";
+/// Not in the design: the config file could not be written.
+pub fn footer_save_failed(err: &str) -> String {
+    format!("Couldn't save settings: {err}")
+}
 pub const FOOTER_SAVED: &str = "Saved";
 pub const FOOTER_SAVED_NO_SERVICE: &str =
     "Saved. Restart the clippo service to apply paste and OCR settings";
