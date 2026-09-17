@@ -462,7 +462,7 @@ A list of rows, each: `Format` text field, live preview to the right, `Label` te
    without two queries.
 5. `Config` gets `Serialize`; add `expire_days`, `plain.strip_markdown`, `[macros]`
    (`restore_clipboard`, `[[macros.items]]` with `format`, `label`). Writer uses `toml_edit`.
-6. Socket protocol (`paste.rs::serve`) gains: `menu toggle`, `reload`, `status` (reply:
+6. Socket protocol (`service.rs::serve`) gains: `menu toggle`, `reload`, `status` (reply:
    `ocr=<engine|none> watching=1`), `copy <id> [plain|nomd]` (11.2), and a push line
    `ocr done <id>` to connected menu clients. This turns the socket into the one channel
    between service and window.

@@ -79,8 +79,11 @@ pub fn copy_formats(formats: &[Format]) -> Result<()> {
     Options::new()
         .copy_multi(sources)
         .map_err(|e| anyhow!("could not take the clipboard: {e}"))?;
-    // copy_multi returns before its thread flushes set_selection; confirm ownership so "ok"
-    // means what wl-copy's exit means.
+    // copy_multi returns before its thread flushes set_selection. Waiting until the primary
+    // type is offered catches the change for images and for text replacing an image; when
+    // text replaces text the previous owner offers the same type, so this passes at once and
+    // the remaining race is the thread's first flush (microseconds; the menu also waits 50 ms
+    // before pasting).
     let start = Instant::now();
     loop {
         if list_types().contains(&primary.mime) {

@@ -231,10 +231,12 @@ fn run(cli: Cli) -> Result<()> {
             match service::status(&paths) {
                 Ok(s) => {
                     println!("Service: running");
-                    println!(
-                        "OCR engine: {}",
-                        s.ocr.as_deref().unwrap_or("none (run `clippo setup-ocr` or install tesseract)")
-                    );
+                    let engine = match s.ocr.as_deref() {
+                        Some(engine) => engine,
+                        None if cfg.ocr.engine == config::OcrEngineKind::Off => "off",
+                        None => "none (run `clippo setup-ocr` or install tesseract)",
+                    };
+                    println!("OCR engine: {engine}");
                     println!("Entries: {}", s.items);
                     println!("Images waiting for OCR: {}", s.pending_ocr);
                 }
