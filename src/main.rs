@@ -6,6 +6,7 @@ mod ocr;
 mod paste;
 mod plain;
 mod store;
+mod vkbd;
 mod thumbs;
 mod watch;
 

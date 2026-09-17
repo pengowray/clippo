@@ -58,9 +58,20 @@ pub enum PasteKeys {
     CtrlShiftV,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum PasteMethod {
+    /// Wayland virtual keyboard, falling back to uinput.
+    #[default]
+    Auto,
+    Wayland,
+    Uinput,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct PasteConfig {
+    pub method: PasteMethod,
     /// Paste straight away after `clippo plain`, unless `--no-paste` is given.
     pub auto_paste: bool,
     /// Paste straight away after picking an entry in the menu.
@@ -75,6 +86,7 @@ pub struct PasteConfig {
 impl Default for PasteConfig {
     fn default() -> Self {
         Self {
+            method: PasteMethod::Auto,
             auto_paste: true,
             paste_on_select: true,
             keys: PasteKeys::ShiftInsert,

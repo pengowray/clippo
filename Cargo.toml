@@ -19,6 +19,8 @@ rusqlite = { version = "0.40.2", features = ["bundled"] }
 serde = { version = "1.0.229", features = ["derive"] }
 sha2 = "0.11.0"
 toml = "1.1.6"
+wayland-client = "0.31"
+wayland-protocols-misc = { version = "0.3", features = ["client"] }
 
 # Dependencies (ocrs/rten especially) are unusably slow unoptimised.
 [profile.dev.package."*"]

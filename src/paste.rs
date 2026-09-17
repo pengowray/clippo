@@ -13,7 +13,7 @@ use std::time::Duration;
 use anyhow::{Context, Result, anyhow, bail};
 use evdev::{AttributeSet, EventType, InputEvent, KeyCode, uinput::VirtualDevice};
 
-use crate::config::{PasteConfig, PasteKeys};
+use crate::config::{PasteConfig, PasteKeys, PasteMethod};
 
 /// How long a freshly created keyboard needs before the compositor reads its keys.
 const NEW_DEVICE_SETTLE: Duration = Duration::from_millis(800);
@@ -113,8 +113,21 @@ fn decode(line: &str) -> Option<PasteConfig> {
     })
 }
 
-/// Press the paste keys, through the running `clippo watch` if there is one.
+/// Press the paste keys with the configured method.
 pub fn send(cfg: &PasteConfig) -> Result<()> {
+    if cfg.method != PasteMethod::Uinput {
+        sleep(Duration::from_millis(cfg.delay_ms));
+        match crate::vkbd::paste(cfg.keys) {
+            Ok(()) => return Ok(()),
+            Err(e) if cfg.method == PasteMethod::Wayland => return Err(e),
+            Err(e) => crate::log(&format!("paste: Wayland virtual keyboard failed ({e:#}), trying uinput")),
+        }
+    }
+    send_uinput(cfg)
+}
+
+/// Press the paste keys through uinput, using the running `clippo watch`'s keyboard if there is one.
+fn send_uinput(cfg: &PasteConfig) -> Result<()> {
     match send_via_service(cfg) {
         Ok(()) => Ok(()),
         Err(e) => {
