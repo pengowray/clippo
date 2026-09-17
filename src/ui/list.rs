@@ -441,7 +441,7 @@ fn action_button<'a>(
 
 /// Opacity of a greyed button's glyph; the theme's disabled foreground is too close to
 /// the enabled one to read at 28 px.
-const DISABLED_ALPHA: f32 = 0.35;
+const DISABLED_ALPHA: f32 = 0.15;
 
 fn disabled_text(t: &Theme) -> TextStyle {
     TextStyle {
