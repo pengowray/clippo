@@ -59,7 +59,7 @@ engine = "auto"           # "ocrs", "tesseract", "auto" or "off"
 tesseract_lang = "eng"    # passed to tesseract -l
 
 [paste]
-method = "auto"           # "wayland" (virtual keyboard protocol), "uinput", or "auto" = wayland then uinput
+method = "wayland"        # "wayland" (virtual keyboard protocol), "uinput", or "auto" = wayland then uinput
 auto_paste = true         # `clippo plain` pastes after replacing the clipboard
 paste_on_select = true    # `clippo menu` pastes the entry you pick
 keys = "shift-insert"     # "shift-insert", "ctrl-v" or "ctrl-shift-v"

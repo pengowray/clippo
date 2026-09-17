@@ -30,10 +30,11 @@ pub fn run(cfg: &Config, paths: &Paths) -> Result<()> {
     let mut child = cmd.spawn().context("could not run wl-paste")?;
 
     let (cfg, paths) = (cfg.clone(), paths.clone());
-    thread::spawn(move || ocr_worker(&cfg, &paths));
-    thread::spawn(|| {
-        if let Err(e) = crate::paste::serve() {
-            eprintln!("clippo: auto-paste unavailable: {e:#}");
+    let (wake_ocr, wakeups) = std::sync::mpsc::channel();
+    thread::spawn(move || ocr_worker(&cfg, &paths, &wakeups));
+    thread::spawn(move || {
+        if let Err(e) = crate::paste::serve(wake_ocr) {
+            eprintln!("clippo: {e:#}");
         }
     });
 
@@ -41,7 +42,7 @@ pub fn run(cfg: &Config, paths: &Paths) -> Result<()> {
     bail!("clipboard watching stopped: wl-paste exited ({status})");
 }
 
-fn ocr_worker(cfg: &Config, paths: &Paths) {
+fn ocr_worker(cfg: &Config, paths: &Paths, wakeups: &std::sync::mpsc::Receiver<()>) {
     let store = match Store::open(&paths.db) {
         Ok(s) => s,
         Err(e) => {
@@ -55,7 +56,8 @@ fn ocr_worker(cfg: &Config, paths: &Paths) {
         if let Err(e) = ocr_step(cfg, paths, &store, &mut backend, &mut reported_missing) {
             eprintln!("clippo: {e:#}");
         }
-        thread::sleep(POLL_INTERVAL);
+        // Ingest wakes us as soon as an image arrives; the poll catches anything missed.
+        let _ = wakeups.recv_timeout(POLL_INTERVAL);
     }
 }
 

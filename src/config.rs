@@ -62,8 +62,9 @@ pub enum PasteKeys {
 #[serde(rename_all = "lowercase")]
 pub enum PasteMethod {
     /// Wayland virtual keyboard, falling back to uinput.
-    #[default]
     Auto,
+    /// Wayland virtual keyboard only.
+    #[default]
     Wayland,
     Uinput,
 }
@@ -86,7 +87,7 @@ pub struct PasteConfig {
 impl Default for PasteConfig {
     fn default() -> Self {
         Self {
-            method: PasteMethod::Auto,
+            method: PasteMethod::Wayland,
             auto_paste: true,
             paste_on_select: true,
             keys: PasteKeys::ShiftInsert,

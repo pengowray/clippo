@@ -94,6 +94,9 @@ pub fn run(cfg: &Config, paths: &Paths) -> Result<()> {
                 dims,
                 ocr_status,
             })?;
+            if ocr_status == OcrStatus::Pending {
+                crate::paste::notify_ocr();
+            }
         }
         None => {
             let Ok(text) = std::str::from_utf8(&data) else {

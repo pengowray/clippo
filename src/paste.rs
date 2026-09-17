@@ -160,9 +160,18 @@ fn send_via_service(cfg: &PasteConfig) -> Result<()> {
     }
 }
 
-/// Serve paste requests from `clippo plain` and `clippo menu`. Runs until the process exits.
-pub fn serve() -> Result<()> {
-    let mut kb = Keyboard::new()?;
+/// Tell the running `clippo watch` there is a new image to OCR. Does nothing if it isn't running.
+pub fn notify_ocr() {
+    if let Ok(mut stream) = UnixStream::connect(socket_path()) {
+        let _ = stream.write_all(b"ocr\n");
+    }
+}
+
+/// Serve requests from other clippo commands: `ocr` wakes the OCR worker, `paste ...` presses
+/// the paste keys through uinput. Runs until the process exits.
+pub fn serve(wake_ocr: std::sync::mpsc::Sender<()>) -> Result<()> {
+    // Only created when a uinput paste is first requested.
+    let mut kb: Option<Keyboard> = None;
     let path = socket_path();
     let _ = std::fs::remove_file(&path);
     let listener = UnixListener::bind(&path)
@@ -172,15 +181,31 @@ pub fn serve() -> Result<()> {
         let mut line = String::new();
         let mut reader = BufReader::new(&stream);
         let reply = match reader.read_line(&mut line) {
+            Ok(_) if line.trim() == "ocr" => {
+                let _ = wake_ocr.send(());
+                "ok".to_string()
+            }
             Ok(_) => match decode(&line) {
-                Some(cfg) => kb.paste(&cfg).map_or_else(|e| format!("{e:#}"), |()| "ok".into()),
+                Some(cfg) => {
+                    let result = match &mut kb {
+                        Some(kb) => kb.paste(&cfg),
+                        None => Keyboard::new().and_then(|mut new| {
+                            // A new keyboard needs time before the compositor reads it.
+                            sleep(NEW_DEVICE_SETTLE);
+                            let r = new.paste(&cfg);
+                            kb = Some(new);
+                            r
+                        }),
+                    };
+                    result.map_or_else(|e| format!("{e:#}"), |()| "ok".into())
+                }
                 None => "bad request".into(),
             },
             Err(e) => e.to_string(),
         };
         let _ = (&stream).write_all(format!("{reply}\n").as_bytes());
     }
-    Err(anyhow!("paste socket closed"))
+    Err(anyhow!("clippo socket closed"))
 }
 
 #[cfg(test)]
