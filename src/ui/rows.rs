@@ -141,10 +141,11 @@ impl Row {
         self.last_used >= cutoff
     }
 
-    /// Why the `Paste as plain text` button is greyed, or `None` when it is enabled.
+    /// Why the `Paste as plain text` button is greyed, or `None` when it is enabled: every
+    /// text entry, and images whose recognised text is ready.
     pub fn plain_disabled_reason(&self) -> Option<&'static str> {
         match &self.kind {
-            Kind::Text { .. } => (!self.has_rich).then_some(strings::ALREADY_PLAIN),
+            Kind::Text { .. } => None,
             Kind::Image { ocr, .. } => match ocr {
                 Ocr::Text => None,
                 Ocr::Pending => Some(strings::T_OCR_PENDING),

@@ -56,7 +56,10 @@ pub fn overflow(more_lines: usize, chars: Option<usize>) -> Option<String> {
 
 pub const PASTE_WITHOUT_MARKDOWN: &str = "Paste without Markdown";
 pub const PASTE_AS_PLAIN_TEXT: &str = "Paste as plain text";
-pub const ALREADY_PLAIN: &str = "Already plain text";
+pub const PASTE_FORMATTED: &str = "Paste with formatting";
+pub const NO_FORMATTING: &str = "No formatting to keep";
+pub const PASTE_IMAGE: &str = "Paste the image";
+pub const NOT_AN_IMAGE: &str = "Not an image";
 pub const T_OCR_PENDING: &str = "Reading text, try again in a moment";
 pub const T_OCR_EMPTY: &str = "No text in this image";
 pub const T_OCR_FAILED: &str = "Couldn't read text in this image";
@@ -75,9 +78,9 @@ pub fn macro_key(n: usize) -> String {
 }
 
 pub const FOOTER_HINTS: &str =
-    "Enter paste · Shift+Enter paste as plain text · Alt+Enter without Markdown · Shift+Del delete";
+    "Enter paste · Shift+Enter paste as plain text · Alt+Enter without Markdown · Shift+Del delete selected";
 pub const FOOTER_HINTS_COPY: &str =
-    "Enter copy · Shift+Enter copy as plain text · Alt+Enter copy without Markdown · Shift+Del delete";
+    "Enter copy · Shift+Enter copy as plain text · Alt+Enter copy without Markdown · Shift+Del delete selected";
 pub const FOOTER_DELETED: &str = "Deleted.";
 pub const FOOTER_UNDO: &str = "Undo (Ctrl+Z)";
 pub const FOOTER_NO_ENGINE: &str = "No text recognition engine. Set one up in Settings";
@@ -103,8 +106,18 @@ pub fn delete_all_confirm(count: &str) -> String {
 }
 pub const DELETE_ALL: &str = "Delete all";
 pub const SECTION_PASTE: &str = "Paste";
-pub const PASTE_AFTER_PICKING: &str = "Paste after picking an item";
-pub const PASTE_AFTER_PLAIN: &str = "Paste after Paste as plain text (Super+Alt+V)";
+pub const PASTE_AFTER_PICKING: &str = "Paste immediately after picking an item";
+pub const PASTE_AFTER_PICKING_OFF: &str =
+    "Off: picking an item only copies it. Paste it yourself with Ctrl+V.";
+pub const PASTE_AFTER_PLAIN: &str = "Super+Alt+V pastes immediately";
+pub const PASTE_AFTER_PLAIN_OFF: &str =
+    "Off: Super+Alt+V only puts the plain text on the clipboard.";
+pub const TESSERACT_LANGUAGES: &str = "Tesseract languages";
+pub const TESSERACT_MISSING: &str = "Tesseract is not installed.";
+pub const TESSERACT_MORE: &str = "More languages: install the tesseract-ocr-<code> package.";
+pub fn lang_not_installed(code: &str) -> String {
+    format!("{code} (not installed)")
+}
 pub const PLAIN_STRIPS_MARKDOWN: &str = "Super+Alt+V also removes Markdown syntax";
 pub const PLAIN_STRIPS_MARKDOWN_HELP: &str = "Only when the text looks like Markdown. Super+V's \"Paste as plain text\" never removes Markdown; use \"Paste without Markdown\" there.";
 pub const PASTE_BY_PRESSING: &str = "Paste by pressing";
@@ -128,7 +141,6 @@ pub const OCR_STATUS_OFF: &str = "Off";
 pub const SETUP_BUILTIN: &str = "Set up built-in engine";
 pub const DOWNLOADING: &str = "Downloading...";
 pub const INSTALLED: &str = "Installed";
-pub const TESSERACT_LANGUAGE: &str = "Tesseract language";
 pub const SECTION_MACROS: &str = "Macros";
 pub const MACRO_FORMAT: &str = "Format";
 pub const MACRO_LABEL: &str = "Label";

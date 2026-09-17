@@ -89,6 +89,30 @@ fn tesseract_available() -> bool {
         .unwrap_or(false)
 }
 
+/// Language codes tesseract has data for (`tesseract --list-langs`, minus the `osd`
+/// orientation model). `None` when tesseract is not installed.
+pub fn tesseract_langs() -> Option<Vec<String>> {
+    let out = Command::new("tesseract")
+        .arg("--list-langs")
+        .stdin(Stdio::null())
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&out.stdout);
+    let mut langs: Vec<String> = text
+        .lines()
+        .map(str::trim)
+        // The first line is a heading ("List of available languages in ...").
+        .filter(|l| !l.is_empty() && !l.contains(' ') && *l != "osd")
+        .map(str::to_string)
+        .collect();
+    langs.sort();
+    langs.dedup();
+    Some(langs)
+}
+
 pub struct Ocrs {
     engine: ocrs::OcrEngine,
 }

@@ -50,7 +50,8 @@ pub enum Message {
     OcrEngine(usize),
     SetupOcr,
     SetupOcrDone(Result<(), String>),
-    TesseractLang(String),
+    /// Turn a tesseract language on or off.
+    Lang(String, bool),
     MacroFormat(usize, String),
     MacroLabel(usize, String),
     MacroUp(usize),
@@ -91,7 +92,8 @@ pub struct State {
     max_items: String,
     expire_days: String,
     delay_ms: String,
-    tesseract_lang: String,
+    /// Languages tesseract has data for; `None` when it is not installed. Read once per open.
+    tesseract_langs: Option<Vec<String>>,
     macro_formats: Vec<String>,
     macro_labels: Vec<String>,
 }
@@ -160,7 +162,7 @@ impl State {
             max_items: String::new(),
             expire_days: String::new(),
             delay_ms: String::new(),
-            tesseract_lang: String::new(),
+            tesseract_langs: ocr::tesseract_langs(),
             macro_formats: Vec::new(),
             macro_labels: Vec::new(),
         };
@@ -178,7 +180,6 @@ impl State {
             DEFAULT_EXPIRE_DAYS.to_string()
         };
         self.delay_ms = c.paste.delay_ms.to_string();
-        self.tesseract_lang = c.ocr.tesseract_lang.clone();
         self.macro_formats = c.macros.items.iter().map(|m| m.format.clone()).collect();
         self.macro_labels = c
             .macros
@@ -368,12 +369,17 @@ impl State {
                 };
                 None
             }
-            Message::TesseractLang(s) => {
-                self.tesseract_lang = s.clone();
-                if s.trim().is_empty() {
+            Message::Lang(code, on) => {
+                let mut langs = self.selected_langs();
+                if on && !langs.contains(&code) {
+                    langs.push(code);
+                } else if !on {
+                    langs.retain(|l| *l != code);
+                }
+                if langs.is_empty() {
                     None
                 } else {
-                    self.set(&["ocr", "tesseract_lang"], value(s.trim()))
+                    self.set(&["ocr", "tesseract_lang"], value(langs.join("+")))
                 }
             }
             Message::MacroFormat(i, s) => {
@@ -561,12 +567,15 @@ impl State {
         let keys = PASTE_KEYS.iter().position(|(k, _)| *k == p.keys).unwrap_or(0);
         settings::section()
             .title(strings::SECTION_PASTE)
-            .add(settings::item(
+            .add(item_with_help(
                 strings::PASTE_AFTER_PICKING,
+                // The consequence of "off" is spelled out only when it applies.
+                (!p.paste_on_select).then_some(strings::PASTE_AFTER_PICKING_OFF),
                 toggler(p.paste_on_select).on_toggle(Message::PasteOnSelect),
             ))
-            .add(settings::item(
+            .add(item_with_help(
                 strings::PASTE_AFTER_PLAIN,
+                (!p.auto_paste).then_some(strings::PASTE_AFTER_PLAIN_OFF),
                 toggler(p.auto_paste).on_toggle(Message::AutoPaste),
             ))
             .add(
@@ -618,14 +627,50 @@ impl State {
             };
             section = section.add(container(setup).width(Length::Fill));
         }
+        section = section.add(text::body(strings::TESSERACT_LANGUAGES));
+        let Some(installed) = &self.tesseract_langs else {
+            return section
+                .add(text::caption(strings::TESSERACT_MISSING).class(theme::Text::Custom(muted_text)))
+                .into();
+        };
+        let selected = self.selected_langs();
+        // Installed languages, then any the config names that are not installed (greyed).
+        let mut codes: Vec<(String, bool)> = installed.iter().map(|l| (l.clone(), true)).collect();
+        for l in &selected {
+            if !installed.contains(l) {
+                codes.push((l.clone(), false));
+            }
+        }
+        for (code, present) in codes {
+            let on = selected.contains(&code);
+            // The last selected language stays on: tesseract needs at least one.
+            let can_toggle = present && !(on && selected.len() == 1);
+            let label = if present {
+                code.clone()
+            } else {
+                strings::lang_not_installed(&code)
+            };
+            let c = code.clone();
+            section = section.add(settings::item(
+                label,
+                toggler(on).on_toggle_maybe(can_toggle.then_some(move |v| Message::Lang(c.clone(), v))),
+            ));
+        }
         section
-            .add(settings::item(
-                strings::TESSERACT_LANGUAGE,
-                widget::text_input("eng", &self.tesseract_lang)
-                    .on_input(Message::TesseractLang)
-                    .width(120),
-            ))
+            .add(text::caption(strings::TESSERACT_MORE).class(theme::Text::Custom(muted_text)))
             .into()
+    }
+
+    /// Languages named in `ocr.tesseract_lang` (`eng+deu`).
+    fn selected_langs(&self) -> Vec<String> {
+        self.cfg
+            .ocr
+            .tesseract_lang
+            .split('+')
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .collect()
     }
 
     fn macros_section(&self) -> Element<'_, Message> {
@@ -693,6 +738,19 @@ fn set_path(doc: &mut DocumentMut, path: &[&str], item: Item) {
             doc[section][key] = item;
         }
         _ => unreachable!("settings paths have one or two segments"),
+    }
+}
+
+/// A settings row whose help text is only present in some states.
+fn item_with_help<'a>(
+    title: &'a str,
+    help: Option<&'a str>,
+    control: impl Into<Element<'a, Message>>,
+) -> Element<'a, Message> {
+    let b = settings::item::builder(title);
+    match help {
+        Some(h) => b.description(h).control(control).into(),
+        None => b.control(control).into(),
     }
 }
 

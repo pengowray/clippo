@@ -83,31 +83,37 @@ and does not earn a spot on the main surface.
 ## 3. Rows
 
 Common to all rows: 12 px padding, 1 px separator, minimum height 40 px, click anywhere
-pastes. Selected row: accent background at 20% plus the left bar. Hovered row: 8% highlight.
+pastes.
 
-Actions strip at the row's top right, icon buttons 28×28 px, left to right:
+Selection and hover are two different things and look different. The **selected** row
+(accent background at 20% plus the 3 px left bar) is what Enter, Shift+Enter, Alt+Enter
+and Shift+Delete act on; arrows move it. The **hovered** row is only lightened (8%) and
+reveals its `x`; hovering never moves the selection.
 
-| Button | Shown | Tooltip | Action | Key |
-|---|---|---|---|---|
-| `M` (Markdown icon) | only when Markdown is detected in a text entry (see 3.5) | `Paste without Markdown` | Paste the plain text with Markdown syntax removed | Alt+Enter |
-| `T` (text icon) | every row | `Paste as plain text` | Paste the plain text (image: recognised text) | Shift+Enter |
-| `x` | selected and hovered rows only | `Delete` | Delete the entry, with undo | Shift+Delete |
+Paste buttons at the row's left, icon buttons 28×28 px in a fixed column so they line up
+on every row, left to right:
 
-`T` is **enabled** when the entry has something to strip: a text entry with a stored rich
-format (HTML or RTF, see 11.2), or an image whose OCR is done and found text. Otherwise it
-is greyed with a tooltip saying why:
+| Button | Enabled when | Tooltip | Action |
+|---|---|---|---|
+| `txt` | text entries; images whose OCR is done and found text | `Paste as plain text` | Paste the plain text (image: recognised text) |
+| `F` (bold, italic, underlined) | a rich format (HTML or RTF, see 11.2) is stored | `Paste with formatting` | Paste with every stored format |
+| image icon | image entries | `Paste the image` | Paste the image |
 
-| Entry | Greyed tooltip |
-|---|---|
-| Plain text with no rich format stored | `Already plain text` |
-| Image, OCR pending | `Reading text, try again in a moment` |
-| Image, OCR found nothing | `No text in this image` |
-| Image, OCR failed | `Couldn't read text in this image` |
-| Image, OCR off | `Text recognition is off. Turn it on in Settings` |
+Every button is on every row; a greyed one keeps a tooltip saying why:
 
-`T` on every row is deliberate: it is the second most used action and the user asked for
-it to be visible. `M` only appears where it applies, so its presence is itself the signal
-"this row is Markdown". `x` stays hover-only because it is destructive and rare.
+| Button | Entry | Greyed tooltip |
+|---|---|---|
+| `txt` | Image, OCR pending | `Reading text, try again in a moment` |
+| `txt` | Image, OCR found nothing | `No text in this image` |
+| `txt` | Image, OCR failed | `Couldn't read text in this image` |
+| `txt` | Image, OCR off | `Text recognition is off. Turn it on in Settings` |
+| `F` | no rich format stored | `No formatting to keep` |
+| image | text entry | `Not an image` |
+
+At the row's right: `x` (`Delete`, with undo), on the hovered row only, because it is
+destructive and rare. Enter keeps the default of pasting everything stored. `Paste without
+Markdown` has no button: it is Alt+Enter, and a context-menu item on rows where Markdown
+was detected (3.5).
 
 ### 3.1 Text rows
 
@@ -247,14 +253,16 @@ Shift+Enter on an image whose OCR is still pending: wait up to 3 s for it, foote
 ## 6. Mouse
 
 - Click a row: paste it.
-- Hover a row: highlight and reveal `x`. Click `M`, `T` or `x` does that action without a
-  normal paste.
-- Right-click a row: context menu with `Paste`, `Paste as plain text`, `Paste without
-  Markdown` (text entries only), `Copy only`, `Delete`. Items that are unavailable are
-  greyed, not hidden, so the menu has a stable shape.
+- Hover a row: lighten it and reveal `x`; the selection stays where it is. Clicking `txt`,
+  `F`, the image icon or `x` does that action without a normal paste.
+- Right-click a row: context menu with `Paste`, `Paste as plain text`, `Paste with
+  formatting`, `Paste the image`, `Paste without Markdown` (only on rows where Markdown was
+  detected), `Copy only`, `Delete`. Unavailable items are greyed, not hidden.
 - Scroll wheel scrolls the list; the selected row does not follow the scroll.
-- Click outside the window: nothing (exclusive overlay, there is no "outside" to click; the
-  compositor gives us the whole output). Escape or Super+V closes.
+- Click outside the window: closes it. The compositor moves keyboard focus to the surface
+  that was clicked, the window sees the focus loss (`LayerEvent::Unfocused`) and unmaps.
+  This also covers Super+V handled by the compositor. Focus loss within 300 ms of mapping
+  is ignored, so focus settling at open cannot close it. Escape and Super+V still close.
 - Macro buttons: click pastes. Hover tooltip shows the format string, e.g. `%Y-%m-%d`.
 
 ## 7. Feedback and errors
@@ -389,11 +397,16 @@ The count is real.
 
 | Label | Control | Default | Config key |
 |---|---|---|---|
-| Paste after picking an item | toggle | on | `paste.paste_on_select` |
-| Paste after Paste as plain text (Super+Alt+V) | toggle | on | `paste.auto_paste` |
+| Paste immediately after picking an item | toggle | on | `paste.paste_on_select` |
+| Super+Alt+V pastes immediately | toggle | on | `paste.auto_paste` |
 | Super+Alt+V also removes Markdown syntax | toggle | on | `plain.strip_markdown` (new) |
 | Paste by pressing | dropdown: `Shift+Insert (works in most apps and terminals)`, `Ctrl+V`, `Ctrl+Shift+V` | Shift+Insert | `paste.keys` |
 | Restore the previous clipboard after a macro | toggle | on | `macros.restore_clipboard` (new) |
+
+Help text shown only while the toggle is off, so the consequence is stated where it
+applies: under `Paste immediately after picking an item`, `Off: picking an item only copies
+it. Paste it yourself with Ctrl+V.`; under `Super+Alt+V pastes immediately`, `Off:
+Super+Alt+V only puts the plain text on the clipboard.`
 
 Help text under `Super+Alt+V also removes Markdown syntax`: `Only when the text looks like
 Markdown. Super+V's "Paste as plain text" never removes Markdown; use "Paste without
@@ -420,7 +433,7 @@ install the steam-devices package.` The two uinput-only rows are disabled (greye
 | Read text in copied images | dropdown: `Automatic (built-in if set up, else Tesseract)`, `Built-in (ocrs)`, `Tesseract`, `Off` | Automatic | `ocr.engine` |
 | Status line | text, not a control | | |
 | Set up built-in engine | button, only when ocrs models are missing | | runs `setup-ocr` |
-| Tesseract language | text field | `eng` | `ocr.tesseract_lang` |
+| Tesseract languages | one toggle per installed language (`tesseract --list-langs`, `osd` skipped) | `eng` | `ocr.tesseract_lang`, joined with `+` (`eng+deu`) |
 
 Status line shows what is actually in use, which is the thing the user cannot see today:
 `Using built-in engine` / `Using Tesseract (eng)` / `No engine installed. Images are kept,
@@ -428,6 +441,11 @@ text is read once an engine is set up.` / `Off`.
 
 `Set up built-in engine` downloads ~12 MB; the button shows `Downloading...` with progress,
 then `Installed`. Errors show under the button.
+
+Under the language toggles: `More languages: install the tesseract-ocr-<code> package.`
+When tesseract is not installed the toggles are replaced by `Tesseract is not installed.`
+A language named in the config but not installed is listed greyed as `deu (not installed)`.
+The last selected language cannot be turned off; tesseract needs at least one.
 
 ### Macros
 
@@ -632,21 +650,23 @@ The previous revision's questions were accepted. Remaining, with recommendations
 | Text row, overflow, lines only | `6 more lines` | |
 | Row hover tooltip | `Copied 3 min ago` | relative; `just now`, `N min ago`, `N h ago`, `Yesterday 14:00`, `12 Sep 14:00` |
 | Row hover tooltip, image | `Copied 3 min ago · 1.2 MB` | |
-| Row action, tooltip | `Paste without Markdown` | `M` button, only on detected rows |
-| Row action, tooltip | `Paste as plain text` | `T` button, enabled |
-| Row action, greyed tooltip | `Already plain text` | `T`, plain text with no rich format |
-| Row action, greyed tooltip | `Reading text, try again in a moment` | `T`, image, OCR pending |
-| Row action, greyed tooltip | `No text in this image` | `T`, image, OCR empty |
-| Row action, greyed tooltip | `Couldn't read text in this image` | `T`, image, OCR failed |
-| Row action, greyed tooltip | `Text recognition is off. Turn it on in Settings` | `T`, image, OCR off |
-| Row action, tooltip | `Delete` | |
-| Row context menu | `Paste` / `Paste as plain text` / `Paste without Markdown` / `Copy only` / `Delete` | unavailable items greyed |
+| Row action, tooltip | `Paste as plain text` | `txt` button, enabled |
+| Row action, greyed tooltip | `Reading text, try again in a moment` | `txt`, image, OCR pending |
+| Row action, greyed tooltip | `No text in this image` | `txt`, image, OCR empty |
+| Row action, greyed tooltip | `Couldn't read text in this image` | `txt`, image, OCR failed |
+| Row action, greyed tooltip | `Text recognition is off. Turn it on in Settings` | `txt`, image, OCR off |
+| Row action, tooltip | `Paste with formatting` | `F` button, enabled |
+| Row action, greyed tooltip | `No formatting to keep` | `F`, no rich format stored |
+| Row action, tooltip | `Paste the image` | image button, enabled |
+| Row action, greyed tooltip | `Not an image` | image button, text entry |
+| Row action, tooltip | `Delete` | `x`, hovered row only |
+| Row context menu | `Paste` / `Paste as plain text` / `Paste with formatting` / `Paste the image` / `Paste without Markdown` / `Copy only` / `Delete` | unavailable items greyed; `Paste without Markdown` only on Markdown rows |
 | Macro column heading | `Paste` | |
 | Macro button | `14:00` / `2026-09-17` / `2026-09-17 14:00:05` | live values |
 | Macro button, accelerator | `Alt+1` | small |
 | Macro tooltip | `%Y-%m-%d · Change in Settings` | |
-| Footer, hints | `Enter paste · Shift+Enter paste as plain text · Alt+Enter without Markdown · Shift+Del delete` | Esc hint dropped for width; Escape is universal |
-| Footer, hints, paste on pick off | `Enter copy · Shift+Enter copy as plain text · Alt+Enter copy without Markdown · Shift+Del delete` | |
+| Footer, hints | `Enter paste · Shift+Enter paste as plain text · Alt+Enter without Markdown · Shift+Del delete selected` | Esc hint dropped for width; Escape is universal |
+| Footer, hints, paste on pick off | `Enter copy · Shift+Enter copy as plain text · Alt+Enter copy without Markdown · Shift+Del delete selected` | |
 | Footer, after delete | `Deleted. Undo (Ctrl+Z)` | `Undo` is a link button |
 | Footer, waiting for OCR on Shift+Enter | `Reading text...` | |
 | Footer, error | any of the greyed `T` tooltips above | Shift+Enter on a greyed row |
@@ -675,8 +695,10 @@ The previous revision's questions were accepted. Remaining, with recommendations
 | Settings, History | `Delete all history` | destructive button |
 | Settings, delete confirm | `Delete all 1,000 items? This can't be undone.` + `Delete all` / `Cancel` | count is live |
 | Settings, section | `Paste` | |
-| Settings, Paste | `Paste after picking an item` | |
-| Settings, Paste | `Paste after Paste as plain text (Super+Alt+V)` | |
+| Settings, Paste | `Paste immediately after picking an item` | |
+| Settings, Paste, help while off | `Off: picking an item only copies it. Paste it yourself with Ctrl+V.` | |
+| Settings, Paste | `Super+Alt+V pastes immediately` | |
+| Settings, Paste, help while off | `Off: Super+Alt+V only puts the plain text on the clipboard.` | |
 | Settings, Paste | `Super+Alt+V also removes Markdown syntax` | |
 | Settings, Paste, help | `Only when the text looks like Markdown. Super+V's "Paste as plain text" never removes Markdown; use "Paste without Markdown" there.` | |
 | Settings, Paste | `Paste by pressing` | |
@@ -693,6 +715,9 @@ The previous revision's questions were accepted. Remaining, with recommendations
 | Settings, OCR, options | `Automatic (built-in if set up, else Tesseract)` / `Built-in (ocrs)` / `Tesseract` / `Off` | |
 | Settings, OCR, status | `Using built-in engine` / `Using Tesseract (eng)` / `No engine installed. Images are kept, text is read once an engine is set up.` / `Off` | |
 | Settings, OCR | `Set up built-in engine` | button; `Downloading...` then `Installed` |
-| Settings, OCR | `Tesseract language` | |
+| Settings, OCR | `Tesseract languages` | one toggle per language code |
+| Settings, OCR, language not installed | `deu (not installed)` | greyed toggle |
+| Settings, OCR, help | `More languages: install the tesseract-ocr-<code> package.` | |
+| Settings, OCR, no tesseract | `Tesseract is not installed.` | replaces the toggles |
 | Settings, section | `Macros` | |
 | Settings, Macros | `Format` / `Label` / `Add macro` / `Format codes` | |

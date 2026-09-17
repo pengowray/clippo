@@ -49,6 +49,8 @@ const FOOTER_TTL: Duration = Duration::from_secs(6);
 /// Shift+Enter on a pending image waits this long for OCR (design 5).
 const OCR_WAIT: Duration = Duration::from_secs(3);
 const OCR_POLL: Duration = Duration::from_millis(500);
+/// Focus loss this soon after mapping is the compositor settling, not a click elsewhere.
+const FOCUS_GRACE: Duration = Duration::from_millis(300);
 
 pub static SEARCH_ID: std::sync::LazyLock<widget::Id> =
     std::sync::LazyLock::new(|| widget::Id::new("clippo-search"));
@@ -95,8 +97,13 @@ impl Item {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RowAction {
+    /// Everything stored: the row's default.
     Paste,
     PastePlain,
+    /// Same as `Paste`, but only offered where a rich format is stored.
+    PasteFormatted,
+    /// Same as `Paste`, but only offered on image rows.
+    PasteImage,
     PasteNoMarkdown,
     CopyOnly,
     Delete,
@@ -184,6 +191,7 @@ pub struct App {
     /// Resident mode: the surface comes and goes; the process stays.
     toggles: Option<ToggleSource>,
     mapped: bool,
+    shown_at: Instant,
     pub settings: crate::ui::settings::State,
 }
 
@@ -417,6 +425,7 @@ impl App {
             return Task::none();
         }
         self.mapped = true;
+        self.shown_at = Instant::now();
         self.closing = false;
         self.query.clear();
         self.selected = 0;
@@ -509,6 +518,26 @@ impl App {
                     tokio::time::sleep(Duration::from_millis(300)).await
                 })
                 .map(|()| cosmic::Action::App(Message::Reload))
+            }
+            RowAction::PasteFormatted => {
+                if !row.has_rich {
+                    return self.error(strings::NO_FORMATTING);
+                }
+                self.close_and(Job::Entry {
+                    id,
+                    mode: CopyMode::Full,
+                    paste,
+                })
+            }
+            RowAction::PasteImage => {
+                if !row.is_image() {
+                    return self.error(strings::NOT_AN_IMAGE);
+                }
+                self.close_and(Job::Entry {
+                    id,
+                    mode: CopyMode::Full,
+                    paste,
+                })
             }
             RowAction::PastePlain => {
                 if row.is_image() && row.ocr() == Ocr::Pending {
@@ -915,6 +944,7 @@ impl cosmic::Application for App {
                 .toggles
                 .map(|rx| ToggleSource(Arc::new(Mutex::new(Some(rx))))),
             mapped: false,
+            shown_at: Instant::now(),
             settings,
         };
         // Resident: stay hidden until the first `menu toggle`.
@@ -936,6 +966,16 @@ impl cosmic::Application for App {
                     },
                 ),
             ]),
+            // Clicking another surface takes keyboard focus away: close (design 6). The
+            // grace period skips any focus churn while the surface is still mapping.
+            Message::Layer(LayerEvent::Unfocused, id)
+                if id == self.surface
+                    && self.mapped
+                    && !self.closing
+                    && self.shown_at.elapsed() > FOCUS_GRACE =>
+            {
+                self.close()
+            }
             Message::Layer(_, _) => Task::none(),
             Message::Query(q) => {
                 self.query = q;

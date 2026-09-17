@@ -278,8 +278,12 @@ fn entry<'a>(
         }
     };
 
-    let mut main = column![row![body, actions(idx, r, selected || hovered)].spacing(4)]
-        .width(Length::Fill);
+    let mut main = column![
+        row![paste_buttons(idx, r), body, delete_button(idx, hovered)]
+            .spacing(8)
+            .align_y(Alignment::Start)
+    ]
+    .width(Length::Fill);
     if let Some(hint) = r.overflow_hint() {
         main = main.push(
             container(muted(hint).size(12))
@@ -325,7 +329,8 @@ impl widget::menu::Action for RowMenu {
     }
 }
 
-/// Design 6: a stable shape; unavailable items are greyed, not hidden.
+/// Design 6: unavailable items are greyed, not hidden; `Paste without Markdown` appears
+/// only on rows where Markdown was detected.
 fn context_items(idx: usize, r: &Row) -> Vec<widget::menu::Tree<Message>> {
     use widget::menu::{Item as MenuItem, items};
     let act = |action| RowMenu { idx, action };
@@ -340,19 +345,23 @@ fn context_items(idx: usize, r: &Row) -> Vec<widget::menu::Tree<Message>> {
     } else {
         MenuItem::ButtonDisabled(strings::PASTE_AS_PLAIN_TEXT, None, act(RowAction::PastePlain))
     });
-    list.push(if r.is_image() {
-        MenuItem::ButtonDisabled(
-            strings::PASTE_WITHOUT_MARKDOWN,
-            None,
-            act(RowAction::PasteNoMarkdown),
-        )
+    list.push(if r.has_rich {
+        MenuItem::Button(strings::PASTE_FORMATTED, None, act(RowAction::PasteFormatted))
     } else {
-        MenuItem::Button(
+        MenuItem::ButtonDisabled(strings::PASTE_FORMATTED, None, act(RowAction::PasteFormatted))
+    });
+    list.push(if r.is_image() {
+        MenuItem::Button(strings::PASTE_IMAGE, None, act(RowAction::PasteImage))
+    } else {
+        MenuItem::ButtonDisabled(strings::PASTE_IMAGE, None, act(RowAction::PasteImage))
+    });
+    if r.is_markdown {
+        list.push(MenuItem::Button(
             strings::PASTE_WITHOUT_MARKDOWN,
             None,
             act(RowAction::PasteNoMarkdown),
-        )
-    });
+        ));
+    }
     list.push(MenuItem::Button(
         strings::MENU_COPY_ONLY,
         None,
@@ -384,13 +393,14 @@ fn thumbnail<'a>(thumb: Option<&'a widget::image::Handle>, r: &'a Row) -> Elemen
         .into()
 }
 
+/// A 28×28 icon-style button; `None` greys it while keeping its tooltip.
 fn action_button<'a>(
-    glyph: &'a str,
+    glyph: Element<'a, Message>,
     tip: String,
     on_press: Option<Message>,
 ) -> Element<'a, Message> {
     let b = button::custom(
-        container(text(glyph).size(14))
+        container(glyph)
             .width(Length::Fill)
             .height(Length::Fill)
             .align_x(Alignment::Center)
@@ -404,42 +414,72 @@ fn action_button<'a>(
     tooltip(b, text::caption(tip), tooltip::Position::Bottom).into()
 }
 
-fn icon_action<'a>(name: &'a str, tip: &'a str, on_press: Message) -> Element<'a, Message> {
-    let b = button::icon(widget::icon::from_name(name).size(16))
-        .class(theme::Button::Icon)
-        .width(ACTION_SIZE)
-        .height(ACTION_SIZE)
-        .on_press(on_press);
-    tooltip(b, text::caption(tip), tooltip::Position::Bottom).into()
+/// `F` in bold italic underline: the "formatted" glyph.
+fn formatted_glyph<'a>() -> Element<'a, Message> {
+    let font = cosmic::font::Font {
+        weight: cosmic::iced::font::Weight::Bold,
+        style: cosmic::iced::font::Style::Italic,
+        ..cosmic::font::default()
+    };
+    cosmic::iced::widget::rich_text::<'a, (), Message, Theme, cosmic::Renderer>(vec![
+        cosmic::iced::widget::span("F").font(font).underline(true).size(14),
+    ])
+    .into()
 }
 
-fn actions<'a>(idx: usize, r: &'a Row, show_delete: bool) -> Element<'a, Message> {
-    let mut strip = row![].spacing(2).align_y(Alignment::Center);
-    if r.is_markdown {
-        strip = strip.push(action_button(
-            "M",
-            strings::PASTE_WITHOUT_MARKDOWN.into(),
-            Some(Message::Act(idx, RowAction::PasteNoMarkdown)),
-        ));
-    }
-    let (tip, on_press) = match r.plain_disabled_reason() {
+/// The three paste buttons at the left of every row, in a fixed column so they line up:
+/// plain text, formatted, image. Greyed ones say why in their tooltip.
+fn paste_buttons<'a>(idx: usize, r: &'a Row) -> Element<'a, Message> {
+    let (plain_tip, plain_on) = match r.plain_disabled_reason() {
         None => (
             strings::PASTE_AS_PLAIN_TEXT.to_string(),
             Some(Message::Act(idx, RowAction::PastePlain)),
         ),
         Some(reason) => (reason.to_string(), None),
     };
-    strip = strip.push(action_button("T", tip, on_press));
-    if show_delete {
-        strip = strip.push(icon_action(
-            "window-close-symbolic",
-            strings::DELETE,
-            Message::Act(idx, RowAction::Delete),
-        ));
+    let (fmt_tip, fmt_on) = if r.has_rich {
+        (
+            strings::PASTE_FORMATTED.to_string(),
+            Some(Message::Act(idx, RowAction::PasteFormatted)),
+        )
     } else {
-        strip = strip.push(widget::Space::new().width(ACTION_SIZE));
+        (strings::NO_FORMATTING.to_string(), None)
+    };
+    let (img_tip, img_on) = if r.is_image() {
+        (
+            strings::PASTE_IMAGE.to_string(),
+            Some(Message::Act(idx, RowAction::PasteImage)),
+        )
+    } else {
+        (strings::NOT_AN_IMAGE.to_string(), None)
+    };
+    row![
+        action_button(text("txt").size(11).into(), plain_tip, plain_on),
+        action_button(formatted_glyph(), fmt_tip, fmt_on),
+        action_button(
+            widget::icon::from_name("image-x-generic-symbolic")
+                .size(16)
+                .into(),
+            img_tip,
+            img_on,
+        ),
+    ]
+    .spacing(2)
+    .align_y(Alignment::Center)
+    .into()
+}
+
+/// The delete button at the right, shown on the hovered row only (design 3).
+fn delete_button<'a>(idx: usize, hovered: bool) -> Element<'a, Message> {
+    if !hovered {
+        return widget::Space::new().width(ACTION_SIZE).into();
     }
-    strip.into()
+    let b = button::icon(widget::icon::from_name("window-close-symbolic").size(16))
+        .class(theme::Button::Icon)
+        .width(ACTION_SIZE)
+        .height(ACTION_SIZE)
+        .on_press(Message::Act(idx, RowAction::Delete));
+    tooltip(b, text::caption(strings::DELETE), tooltip::Position::Bottom).into()
 }
 
 // ---- macro column ----------------------------------------------------------------------------
