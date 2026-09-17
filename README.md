@@ -19,7 +19,8 @@ cargo build --release   # OCR is very slow in debug builds
 |---|---|
 | `clippo watch` | Records clipboard history until stopped. Runs `wl-paste --watch clippo ingest` and an OCR worker for new images. |
 | `clippo ingest` | Stores clipboard data from stdin. `wl-paste --watch` calls this. |
-| `clippo menu` | Opens the history picker in fuzzel. Selecting an entry copies it. If the picker is already open, closes it. |
+| `clippo menu` | Opens the history picker in fuzzel. Selecting an entry copies it, then pastes it if `paste_on_select` is on. If the picker is already open, closes it. |
+| `clippo plain [--paste \| --no-paste]` | Replaces the clipboard with plain text, then pastes it if `auto_paste` is on. For an image, uses the text found in it. |
 | `clippo get <id> [--plain]` | Writes an entry to stdout. With `--plain`, images output their OCR text (running OCR first if needed). |
 | `clippo list` | Lists entries, newest first, as `id<TAB>label`. |
 | `clippo delete <id>` | Deletes one entry. |
@@ -57,11 +58,17 @@ max_items = 1000          # oldest entries beyond this are deleted
 engine = "auto"           # "ocrs", "tesseract", "auto" or "off"
 tesseract_lang = "eng"    # passed to tesseract -l
 
-[paste]                   # read but not used yet
-auto_paste = true
-keys = "shift-insert"
-delay_ms = 150
+[paste]
+auto_paste = true         # `clippo plain` pastes after replacing the clipboard
+paste_on_select = true    # `clippo menu` pastes the entry you pick
+keys = "shift-insert"     # "shift-insert", "ctrl-v" or "ctrl-shift-v"
+delay_ms = 200            # wait before pasting, so the shortcut keys can be released
+release_modifiers = true  # send Super and Alt key-ups before pasting
 ```
+
+Pasting presses keys through a virtual keyboard, so `/dev/uinput` must be writable by your user.
+On Ubuntu and Pop!_OS, the `steam-devices` package sets this up. Shift+Insert pastes in most
+apps, including terminals, which is why it's the default.
 
 OCR engines:
 
@@ -109,6 +116,12 @@ In COSMIC Settings, open Keyboard > Keyboard shortcuts > Custom shortcuts and ad
 - Name: `Clipboard history`
 - Command: `clippo menu` (use the full path if it is not on `PATH`)
 - Shortcut: `Super+V`
+
+And for plain-text paste:
+
+- Name: `Paste as plain text`
+- Command: `clippo plain`
+- Shortcut: `Super+Alt+V`
 
 Remove or rebind any existing `Super+V` shortcut (such as one running cliphist) first.
 
