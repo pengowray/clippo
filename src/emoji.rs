@@ -314,9 +314,11 @@ impl Catalog {
         if q.is_empty() {
             return Vec::new();
         }
-        let mut hits: Vec<(u8, usize)> = Vec::new();
+        // (rank, name length in words, index): at equal rank a shorter name is the
+        // closer match, so 'heart' lists 'red heart' before 'smiling face with heart-eyes'.
+        let mut hits: Vec<(u8, usize, usize)> = Vec::new();
         if let Some(i) = self.index_of(query.trim()) {
-            hits.push((0, i));
+            hits.push((0, 0, i));
         }
         if let Some(c) = parse_code_point(&q)
             && let Some(&i) = self
@@ -324,7 +326,7 @@ impl Catalog {
                 .get(&c.to_string())
                 .or_else(|| self.by_text.get(&format!("{c}{VS16_EMOJI}")))
         {
-            hits.push((0, i));
+            hits.push((0, 0, i));
         }
         let words: Vec<&str> = q
             .split(|c: char| !c.is_alphanumeric())
@@ -353,15 +355,15 @@ impl Catalog {
                     // Emoji ahead of plain characters at the same rank: 'heart' should
                     // list ❤️ before ♥.
                     let tie = u8::from(g.emoji().is_none());
-                    hits.push((worst * 2 + tie, i));
+                    hits.push((worst * 2 + tie, g.words.len(), i));
                 }
             }
         }
-        hits.sort_by_key(|&(r, i)| (r, i));
+        hits.sort();
         let mut seen = HashSet::new();
         hits.into_iter()
-            .filter(|&(_, i)| seen.insert(i))
-            .map(|(_, i)| i)
+            .filter(|&(_, _, i)| seen.insert(i))
+            .map(|(_, _, i)| i)
             .collect()
     }
 }
