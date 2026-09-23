@@ -67,6 +67,12 @@ pub fn run(cfg: &Config, paths: &Paths, n: usize) -> Result<()> {
     if text.is_empty() {
         bail!("macro {n} produces no text");
     }
+    paste_text(cfg, paths, &text)
+}
+
+/// Copy `text`, paste it, and put the previous clipboard back (with
+/// `macros.restore_clipboard`). Not recorded in history. Used by macros and the emoji picker.
+pub fn paste_text(cfg: &Config, paths: &Paths, text: &str) -> Result<()> {
     let store = Store::open(&paths.db)?;
     let previous = if cfg.macros.restore_clipboard {
         current_entry(&store)

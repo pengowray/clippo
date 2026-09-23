@@ -46,7 +46,7 @@ pub struct Glyph {
 #[derive(Debug, Clone)]
 pub enum Kind {
     Emoji(&'static Emoji),
-    Char(char),
+    Char,
 }
 
 impl Glyph {
@@ -90,24 +90,15 @@ impl Glyph {
             name,
             words,
             codes: Vec::new(),
-            kind: Kind::Char(c),
+            kind: Kind::Char,
         })
     }
 
     pub fn emoji(&self) -> Option<&'static Emoji> {
         match self.kind {
             Kind::Emoji(e) => Some(e),
-            Kind::Char(_) => None,
+            Kind::Char => None,
         }
-    }
-
-    /// `U+1F600 U+FE0F` for the tooltip and detail strip.
-    pub fn code_points(&self) -> String {
-        self.text
-            .chars()
-            .map(|c| format!("U+{:04X}", c as u32))
-            .collect::<Vec<_>>()
-            .join(" ")
     }
 
     /// The emoji as shown with `tone` applied, when it takes a skin tone.
@@ -117,7 +108,7 @@ impl Glyph {
                 e.with_skin_tone(tone).map_or(e.as_str(), Emoji::as_str)
             }
             Kind::Emoji(e) => e.as_str(),
-            Kind::Char(_) => &self.text,
+            Kind::Char => &self.text,
         }
     }
 

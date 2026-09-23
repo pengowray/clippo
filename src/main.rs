@@ -48,6 +48,8 @@ enum Cmd {
     Menu,
     /// Open the clipboard history window (replaces `menu` once finished)
     Window,
+    /// Open the emoji and symbol picker; picking one pastes it
+    Emoji,
     /// Replace the clipboard with plain text (recognised text for images), then paste it
     Plain {
         /// Paste after replacing the clipboard, even if `paste.auto_paste` is off
@@ -153,7 +155,8 @@ fn run(cli: Cli) -> Result<()> {
         Cmd::Watch => watch::run(&cfg, &paths),
         Cmd::Ingest => ingest::run(&cfg, &paths),
         Cmd::Menu => menu::run(&cfg, &Store::open(&paths.db)?, &paths),
-        Cmd::Window => ui::run(&cfg, &paths),
+        Cmd::Window => ui::run(&cfg, &paths, ui::WindowPage::List),
+        Cmd::Emoji => ui::run(&cfg, &paths, ui::WindowPage::Emoji),
         Cmd::Plain {
             paste,
             no_paste,

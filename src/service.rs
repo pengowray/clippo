@@ -10,7 +10,7 @@
 //! | `copy <id> [plain\|nomd]` | `ok` | Put an entry on the clipboard, served with every stored format |
 //! | `status` | `ok ocr=<engine\|none> watching=1 items=<n> pending=<n>` | Engine in use and counts |
 //! | `reload` | `ok` | Re-read the config file |
-//! | `menu toggle` | `ok` | Show or hide the history window hosted by the service |
+//! | `menu toggle [emoji]` | `ok` | Show or hide the history window (or the emoji picker) hosted by the service |
 
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
@@ -26,6 +26,7 @@ use crate::config::{Config, PasteConfig, Paths};
 use crate::ocr;
 use crate::paste::{self, Keyboard, NEW_DEVICE_SETTLE};
 use crate::store::Store;
+use crate::ui::WindowPage;
 
 const REPLY_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -89,9 +90,13 @@ pub fn reload(paths: &Paths) -> Result<()> {
     request(paths, "reload").map(drop)
 }
 
-/// Ask the service to show or hide its history window.
-pub fn menu_toggle(paths: &Paths) -> Result<()> {
-    request(paths, "menu toggle").map(drop)
+/// Ask the service to show or hide its window on `page`.
+pub fn menu_toggle(paths: &Paths, page: WindowPage) -> Result<()> {
+    let line = match page {
+        WindowPage::List => "menu toggle",
+        WindowPage::Emoji => "menu toggle emoji",
+    };
+    request(paths, line).map(drop)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -139,8 +144,8 @@ pub fn status(paths: &Paths) -> Result<Status> {
 pub struct Shared {
     pub cfg: RwLock<Config>,
     pub paths: Paths,
-    /// Show or hide the resident history window (`menu toggle`); `None` without a display.
-    pub menu_toggle: Option<Box<dyn Fn() + Send + Sync>>,
+    /// Show or hide the resident window (`menu toggle [emoji]`); `None` without a display.
+    pub menu_toggle: Option<Box<dyn Fn(WindowPage) + Send + Sync>>,
 }
 
 impl Shared {
@@ -236,12 +241,14 @@ impl Server {
                 Ok(String::new())
             }
             Some("menu") if words.next() == Some("toggle") => {
+                let page = WindowPage::parse(words.next())
+                    .ok_or_else(|| anyhow!("bad menu request"))?;
                 let toggle = self
                     .shared
                     .menu_toggle
                     .as_ref()
                     .ok_or_else(|| anyhow!("the service has no window (no Wayland display)"))?;
-                toggle();
+                toggle(page);
                 Ok(String::new())
             }
             _ => bail!("bad request"),

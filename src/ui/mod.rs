@@ -1,6 +1,7 @@
-//! The Super+V clipboard history window (libcosmic, layer-shell).
+//! The Super+V clipboard history window and the emoji picker (libcosmic, layer-shell).
 
 pub mod app;
+pub mod emoji;
 pub mod list;
 pub mod notify;
 pub mod rows;
@@ -49,17 +50,35 @@ impl Drop for PidGuard {
     }
 }
 
-/// Show-or-hide requests from the service socket to the resident window.
-#[derive(Clone)]
-pub struct ToggleSender(UnboundedSender<()>);
+/// What the window opens to: the history list (`clippo window`) or the emoji picker
+/// (`clippo emoji`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WindowPage {
+    List,
+    Emoji,
+}
 
-impl ToggleSender {
-    pub fn toggle(&self) {
-        let _ = self.0.unbounded_send(());
+impl WindowPage {
+    pub fn parse(word: Option<&str>) -> Option<Self> {
+        match word {
+            None | Some("list") => Some(Self::List),
+            Some("emoji") => Some(Self::Emoji),
+            _ => None,
+        }
     }
 }
 
-pub type ToggleReceiver = UnboundedReceiver<()>;
+/// Show-or-hide requests from the service socket to the resident window.
+#[derive(Clone)]
+pub struct ToggleSender(UnboundedSender<WindowPage>);
+
+impl ToggleSender {
+    pub fn toggle(&self, page: WindowPage) {
+        let _ = self.0.unbounded_send(page);
+    }
+}
+
+pub type ToggleReceiver = UnboundedReceiver<WindowPage>;
 
 pub fn toggle_channel() -> (ToggleSender, ToggleReceiver) {
     let (tx, rx) = unbounded();
@@ -73,9 +92,10 @@ fn settings() -> cosmic::app::Settings {
         .client_decorations(true)
 }
 
-/// Toggle the window: through the running service when it hosts one, else in this process.
-pub fn run(cfg: &Config, paths: &Paths) -> Result<()> {
-    match crate::service::menu_toggle(paths) {
+/// Toggle the window on `page`: through the running service when it hosts one, else in
+/// this process. Without the service, a second window of either page closes the first.
+pub fn run(cfg: &Config, paths: &Paths, page: WindowPage) -> Result<()> {
+    match crate::service::menu_toggle(paths, page) {
         Ok(()) => return Ok(()),
         // Not running, or an older service without a window: open one here instead.
         Err(e) => crate::log(&format!("window: {e:#}; opening in-process")),
@@ -95,6 +115,7 @@ pub fn run(cfg: &Config, paths: &Paths) -> Result<()> {
             cfg: cfg.clone(),
             paths: paths.clone(),
             toggles: None,
+            page,
         },
     )
     .context("could not open the clipboard window")
@@ -109,6 +130,7 @@ pub fn run_resident(cfg: &Config, paths: &Paths, toggles: ToggleReceiver) -> Res
             cfg: cfg.clone(),
             paths: paths.clone(),
             toggles: Some(toggles),
+            page: WindowPage::List,
         },
     )
     .context("could not start the clipboard window")

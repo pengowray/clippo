@@ -206,6 +206,66 @@ pub fn size_label(bytes: usize) -> String {
     }
 }
 
+// ---- emoji picker (design 16) ----------------------------------------------------------------
+
+pub const EMOJI_SEARCH_PLACEHOLDER: &str = "Search emoji, letters and symbols";
+pub fn emoji_match_count(shown: usize, truncated: usize) -> String {
+    let n = shown + truncated;
+    let base = format!("{n} {}", if n == 1 { "match" } else { "matches" });
+    if truncated > 0 {
+        format!("{base}, first {shown} shown")
+    } else {
+        base
+    }
+}
+pub const EMOJI_FAVOURITES: &str = "Favourites";
+pub const EMOJI_RECENT: &str = "Recent";
+pub const EMOJI_EMPTY_TITLE: &str = "Nothing picked yet";
+pub const EMOJI_EMPTY_BODY: &str =
+    "Emoji you pick show up here. Alt+click one to add it to favourites";
+pub fn emoji_tab_name(tab: crate::emoji::Tab) -> &'static str {
+    use crate::emoji::Tab;
+    match tab {
+        Tab::Recent => "Favourites and recent",
+        Tab::Smileys => "Smileys and emotion",
+        Tab::People => "People and body",
+        Tab::Animals => "Animals and nature",
+        Tab::Food => "Food and drink",
+        Tab::Travel => "Travel and places",
+        Tab::Activities => "Activities",
+        Tab::Objects => "Objects",
+        Tab::Symbols => "Symbols",
+        Tab::Flags => "Flags",
+        Tab::Letters => "Letters",
+        Tab::TextSymbols => "Text symbols",
+    }
+}
+pub fn skin_tone_tooltip(tone: emojis::SkinTone) -> &'static str {
+    use emojis::SkinTone;
+    match tone {
+        SkinTone::Default => "Skin tone: default (yellow)",
+        SkinTone::Light => "Skin tone: light",
+        SkinTone::MediumLight => "Skin tone: medium-light",
+        SkinTone::Medium => "Skin tone: medium",
+        SkinTone::MediumDark => "Skin tone: medium-dark",
+        SkinTone::Dark => "Skin tone: dark",
+        _ => "Skin tone",
+    }
+}
+/// Captions under the three presentation chips. The first names the bare character and
+/// says which style Unicode gives it by default.
+pub const VARIANT_DEFAULT_TEXT: &str = "Default: text";
+pub const VARIANT_DEFAULT_EMOJI: &str = "Default: emoji";
+pub const VARIANT_TEXT: &str = "Text";
+pub const VARIANT_EMOJI: &str = "Emoji";
+pub const ADD_FAVOURITE: &str = "Add to favourites (Alt+click)";
+pub const REMOVE_FAVOURITE: &str = "Remove from favourites";
+pub const EMOJI_FOOTER_HINTS: &str =
+    "Enter paste · Ctrl+Enter copy only · Alt+Enter favourite · Ctrl+Tab next tab · Super+V history";
+pub fn emoji_copied(text: &str) -> String {
+    format!("Copied {text}")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

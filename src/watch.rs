@@ -41,7 +41,7 @@ pub fn run(cfg: &Config, paths: &Paths) -> Result<()> {
         paths: paths.clone(),
         menu_toggle: window.as_ref().map(|(tx, _)| {
             let tx = tx.clone();
-            Box::new(move || tx.toggle()) as Box<dyn Fn() + Send + Sync>
+            Box::new(move |page| tx.toggle(page)) as Box<dyn Fn(crate::ui::WindowPage) + Send + Sync>
         }),
     });
     let (wake_ocr, wakeups) = std::sync::mpsc::channel();

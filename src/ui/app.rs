@@ -1,5 +1,5 @@
-//! The Super+V window: a layer-shell overlay hosting the history list, macro column and
-//! settings page. See docs/menu-design.md.
+//! The Super+V window: a layer-shell overlay hosting the history list, macro column,
+//! settings page and the emoji picker (`clippo emoji`). See docs/menu-design.md.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -34,6 +34,7 @@ use crate::thumbs;
 use crate::ui::list;
 use crate::ui::rows::{self, Ocr, Row};
 use crate::ui::strings;
+use crate::ui::{WindowPage, emoji};
 use crate::{macros, paste, service};
 
 pub const WIDTH: u32 = 800;
@@ -67,6 +68,8 @@ pub struct Flags {
     pub paths: Paths,
     /// Resident mode: stay hidden until the service asks, and hide instead of exiting.
     pub toggles: Option<crate::ui::ToggleReceiver>,
+    /// The page to open on (non-resident).
+    pub page: WindowPage,
 }
 
 /// The toggle receiver, handed to the subscription once. Hashes as a constant so iced keeps
@@ -81,7 +84,7 @@ impl std::hash::Hash for ToggleSource {
 
 fn toggle_stream(src: &ToggleSource) -> Pin<Box<dyn Stream<Item = Message> + Send>> {
     match src.0.lock().ok().and_then(|mut rx| rx.take()) {
-        Some(rx) => Box::pin(rx.map(|()| Message::Toggle)),
+        Some(rx) => Box::pin(rx.map(Message::Toggle)),
         None => Box::pin(futures::stream::pending()),
     }
 }
@@ -118,6 +121,7 @@ pub enum RowAction {
 pub enum Page {
     List,
     Settings,
+    Emoji,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -138,6 +142,8 @@ pub enum Job {
     },
     /// `clippo macro n`: copy, paste, restore the previous clipboard (design 9).
     Macro(usize),
+    /// An emoji or character: copy, paste, restore, not recorded (design 16).
+    Text(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -170,12 +176,19 @@ pub enum Message {
     /// The list scrolled to this relative offset (0 top, 1 bottom).
     Scrolled(f32),
     OcrWaited(i64, bool),
-    /// `menu toggle` from the service (resident mode).
-    Toggle,
+    /// `menu toggle [emoji]` from the service (resident mode).
+    Toggle(WindowPage),
     Done(Result<(), JobError>),
     OpenSettings,
     CloseSettings,
     Settings(crate::ui::settings::Message),
+    Emoji(emoji::Message),
+    /// Modifier keys, tracked so Alt+click and Ctrl+click in the picker can be told apart.
+    Modifiers(Modifiers),
+    /// The picker asks for this text to be pasted (window closes first).
+    PasteText(String),
+    /// The picker asks for this text to be copied; the window stays open.
+    CopyText(String),
 }
 
 pub struct App {
@@ -215,6 +228,10 @@ pub struct App {
     /// The first list read has completed; before that the empty state would be a lie.
     loaded: bool,
     pub settings: crate::ui::settings::State,
+    emoji: emoji::State,
+    modifiers: Modifiers,
+    /// Where the closed window reopens without a page in the request (Super+V key).
+    start_page: WindowPage,
 }
 
 impl App {
@@ -449,7 +466,7 @@ impl App {
     }
 
     /// Map the overlay with fresh state: top row selected, no search, older rows folded.
-    fn show(&mut self) -> Task<Message> {
+    fn show(&mut self, page: WindowPage) -> Task<Message> {
         if self.mapped {
             return Task::none();
         }
@@ -462,7 +479,11 @@ impl App {
         self.older_expanded = false;
         self.footer = None;
         self.deleted = None;
-        self.page = Page::List;
+        self.page = match page {
+            WindowPage::List => Page::List,
+            WindowPage::Emoji => Page::Emoji,
+        };
+        self.emoji.reset();
         self.redraw_probe = Some(Instant::now());
         self.render_limit = RENDER_CHUNK;
         if self.resident() {
@@ -651,9 +672,13 @@ impl App {
             Key::Character(c) => Some(c.to_ascii_lowercase()),
             _ => None,
         };
-        // Super+V toggles the window even while it has exclusive focus (design 1).
+        // Super+V and Super+. toggle the window even while it has exclusive focus
+        // (design 1); on the other page they switch to theirs.
         if mods.logo() && ch.as_deref() == Some("v") {
-            return self.close();
+            return self.switch_or_close(WindowPage::List);
+        }
+        if mods.logo() && ch.as_deref() == Some(".") {
+            return self.switch_or_close(WindowPage::Emoji);
         }
         if mods.control() && ch.as_deref() == Some(",") {
             return self.open_settings();
@@ -662,6 +687,16 @@ impl App {
             return match key {
                 Key::Named(Named::Escape) => self.close_settings(),
                 _ => Task::none(),
+            };
+        }
+        if self.page == Page::Emoji {
+            return match key {
+                Key::Named(Named::Escape) if self.emoji.searching() => {
+                    self.emoji.clear_search();
+                    Task::none()
+                }
+                Key::Named(Named::Escape) => self.close(),
+                _ => self.emoji.on_key(&key, mods),
             };
         }
         if mods.alt()
@@ -718,6 +753,25 @@ impl App {
         }
     }
 
+    /// The Super+V / Super+. keys: close when already on that page, else switch to it.
+    fn switch_or_close(&mut self, page: WindowPage) -> Task<Message> {
+        let same = matches!(
+            (page, &self.page),
+            (WindowPage::List, Page::List) | (WindowPage::Emoji, Page::Emoji)
+        );
+        if same {
+            return self.close();
+        }
+        self.page = match page {
+            WindowPage::List => Page::List,
+            WindowPage::Emoji => {
+                self.emoji.reset();
+                Page::Emoji
+            }
+        };
+        text_input::focus(SEARCH_ID.clone())
+    }
+
     fn open_settings(&mut self) -> Task<Message> {
         self.page = Page::Settings;
         self.settings = crate::ui::settings::State::new(&self.cfg, &self.paths, self.rows.len());
@@ -725,7 +779,10 @@ impl App {
     }
 
     fn close_settings(&mut self) -> Task<Message> {
-        self.page = Page::List;
+        self.page = match self.start_page {
+            WindowPage::Emoji => Page::Emoji,
+            WindowPage::List => Page::List,
+        };
         // Settings may have changed the list (Delete all) or paste behaviour.
         if self.settings.changed {
             match Config::load(&self.paths) {
@@ -807,7 +864,9 @@ impl App {
                 .class(theme::Text::Custom(list::warning_text))
                 .into(),
             None => {
-                let hints = if self.cfg.paste.paste_on_select {
+                let hints = if self.page == Page::Emoji {
+                    strings::EMOJI_FOOTER_HINTS
+                } else if self.cfg.paste.paste_on_select {
                     strings::FOOTER_HINTS
                 } else {
                     strings::FOOTER_HINTS_COPY
@@ -873,6 +932,10 @@ fn run_job(job: Job, cfg: &Config, paths: &Paths) -> Result<(), JobError> {
         Job::Macro(n) => {
             std::thread::sleep(paste::AFTER_MENU_WAIT);
             macros::run(cfg, paths, n).map_err(|e| JobError::Paste(format!("{e:#}")))
+        }
+        Job::Text(text) => {
+            std::thread::sleep(paste::AFTER_MENU_WAIT);
+            macros::paste_text(cfg, paths, &text).map_err(|e| JobError::Paste(format!("{e:#}")))
         }
     }
 }
@@ -946,6 +1009,9 @@ fn map_event(e: iced::Event, status: Status, _id: window::Id) -> Option<Message>
         iced::Event::Keyboard(iced::keyboard::Event::KeyPressed { key, modifiers, .. }) => {
             Some(Message::Key(key, modifiers, status))
         }
+        iced::Event::Keyboard(iced::keyboard::Event::ModifiersChanged(m)) => {
+            Some(Message::Modifiers(m))
+        }
         iced::Event::PlatformSpecific(PlatformSpecific::Wayland(wayland::Event::Layer(
             e,
             _,
@@ -981,6 +1047,8 @@ impl cosmic::Application for App {
         // Banner state arrives asynchronously (`Message::Status`) once the window is up.
         let (service_running, ocr_engine_missing) = (true, false);
         let settings = crate::ui::settings::State::new(&flags.cfg, &flags.paths, 0);
+        let emoji_state = emoji::State::new(&flags.paths);
+        let start_page = flags.page;
         let mut app = App {
             core,
             surface,
@@ -1017,9 +1085,17 @@ impl cosmic::Application for App {
             list_ms: 0,
             loaded: false,
             settings,
+            emoji: emoji_state,
+            modifiers: Modifiers::empty(),
+            start_page,
         };
-        // Resident: stay hidden until the first `menu toggle`.
-        let task = if resident { Task::none() } else { app.show() };
+        // Resident: stay hidden until the first `menu toggle`. The catalogue is built off
+        // the UI thread meanwhile so the first picker open does not pay for it.
+        let warm = iced::Task::future(async {
+            let _ = tokio::task::spawn_blocking(crate::emoji::catalog).await;
+        })
+        .discard();
+        let task = if resident { warm } else { Task::batch([warm, app.show(start_page)]) };
         (app, task)
     }
 
@@ -1153,12 +1229,26 @@ impl cosmic::Application for App {
                 self.set_footer(Footer::Error(reason.into()));
                 t
             }
-            Message::Toggle => {
+            Message::Toggle(page) => {
                 if self.mapped {
-                    self.close()
+                    self.switch_or_close(page)
                 } else {
-                    self.show()
+                    self.start_page = page;
+                    self.show(page)
                 }
+            }
+            Message::Modifiers(m) => {
+                self.modifiers = m;
+                Task::none()
+            }
+            Message::Emoji(m) => self.emoji.update(m, self.modifiers),
+            Message::PasteText(text) => self.close_and(Job::Text(text)),
+            Message::CopyText(text) => {
+                if let Err(e) = clipboard::copy(Some(crate::ingest::TEXT_MIME), text.as_bytes()) {
+                    return self.error(format!("{e:#}"));
+                }
+                self.set_footer(Footer::Info(strings::emoji_copied(&text)));
+                Task::none()
             }
             Message::Done(result) => {
                 if let Err(e) = &result {
@@ -1217,6 +1307,9 @@ impl cosmic::Application for App {
                 self.view_footer()
             ]
             .into(),
+            Page::Emoji => column![self.emoji.view().map(Message::Emoji), self.view_footer()]
+                .spacing(4)
+                .into(),
         };
         if self.redraw_probe.is_some() {
             self.view_ms.set(build.elapsed().as_millis());

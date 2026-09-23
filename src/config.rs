@@ -162,6 +162,8 @@ pub struct Paths {
     pub ocrs_cli_cache_dir: Option<PathBuf>,
     /// Per-session files: the service socket and the ingest skip list.
     pub runtime_dir: PathBuf,
+    /// The emoji picker's favourites, recent picks and skin tone.
+    pub emoji_prefs: PathBuf,
 }
 
 impl Paths {
@@ -176,6 +178,7 @@ impl Paths {
             db: data_dir.join("history.db"),
             thumbs_dir: dirs.cache_dir().join("thumbs"),
             ocrs_models_dir: data_dir.join("ocrs"),
+            emoji_prefs: data_dir.join("emoji.toml"),
             ocrs_cli_cache_dir: BaseDirs::new().map(|b| b.cache_dir().join("ocrs")),
             runtime_dir,
         })
