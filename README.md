@@ -171,7 +171,7 @@ And for the emoji picker:
 
 - Name: `Emoji`
 - Command: `clippo emoji`
-- Shortcut: `Super+.` (the Windows key)
+- Shortcut: `Super+;` (or `Super+.`, the Windows habit; both work inside the window too)
 
 Macros can be bound the same way, for example `clippo macro 2` to paste today's date.
 

@@ -673,12 +673,12 @@ impl App {
             Key::Character(c) => Some(c.to_ascii_lowercase()),
             _ => None,
         };
-        // Super+V and Super+. toggle the window even while it has exclusive focus
-        // (design 1); on the other page they switch to theirs.
+        // Super+V and Super+. (or Super+;) toggle the window even while it has exclusive
+        // focus (design 1); on the other page they switch to theirs.
         if mods.logo() && ch.as_deref() == Some("v") {
             return self.switch_or_close(WindowPage::List);
         }
-        if mods.logo() && ch.as_deref() == Some(".") {
+        if mods.logo() && matches!(ch.as_deref(), Some(".") | Some(";")) {
             return self.switch_or_close(WindowPage::Emoji);
         }
         if mods.control() && ch.as_deref() == Some(",") {

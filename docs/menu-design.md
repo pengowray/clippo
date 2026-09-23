@@ -817,7 +817,7 @@ Regions, top to bottom:
 | Ctrl+Enter | Copy only; footer says `Copied 😀`; window stays open |
 | Alt+Enter | Add to or remove from favourites |
 | Ctrl+Tab / Ctrl+Shift+Tab | Next / previous tab (clears the search) |
-| Super+. | Close (or, from the history list, switch to the picker) |
+| Super+. or Super+; | Close (or, from the history list, switch to the picker) |
 | Super+V | Switch to the history list (or close it) |
 | Escape | Clear the search, else close |
 | Ctrl+, | Settings; Escape returns to the picker |
