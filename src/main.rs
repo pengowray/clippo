@@ -1,5 +1,6 @@
 mod clipboard;
 mod config;
+mod emoji;
 mod ingest;
 mod macros;
 mod markdown;

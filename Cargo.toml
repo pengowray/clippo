@@ -11,6 +11,7 @@ anyhow = "1.0.104"
 chrono = "0.4"
 clap = { version = "4.6.7", features = ["derive"] }
 directories = "6.0.0"
+emojis = "0.9"
 evdev = "0.13"
 image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "gif", "bmp", "webp", "tiff"] }
 libc = "0.2.189"
@@ -24,6 +25,9 @@ toml = "1.1.6"
 wayland-client = "0.31"
 wayland-protocols-misc = { version = "0.3", features = ["client"] }
 toml_edit = "0.25"
+unicode-normalization = "0.1"
+unicode-properties = { version = "0.1", features = ["general-category", "emoji"] }
+unicode_names2 = "1"
 zbus = { version = "5.15", default-features = false, features = ["tokio"] }
 tokio = { version = "1.52", features = ["rt", "sync", "time"] }
 wl-clipboard-rs = "0.9.3"
