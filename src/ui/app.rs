@@ -230,8 +230,8 @@ pub struct App {
     pub settings: crate::ui::settings::State,
     emoji: emoji::State,
     modifiers: Modifiers,
-    /// Where the closed window reopens without a page in the request (Super+V key).
-    start_page: WindowPage,
+    /// The page settings was opened from, to return to.
+    page_before_settings: Page,
 }
 
 impl App {
@@ -661,6 +661,7 @@ impl App {
     // ---- keys ---------------------------------------------------------------------------
 
     fn on_key(&mut self, key: Key, mods: Modifiers, _status: Status) -> Task<Message> {
+        self.modifiers = mods;
         if self.closing {
             return Task::none();
         }
@@ -773,15 +774,18 @@ impl App {
     }
 
     fn open_settings(&mut self) -> Task<Message> {
+        if self.page != Page::Settings {
+            self.page_before_settings = self.page.clone();
+        }
         self.page = Page::Settings;
         self.settings = crate::ui::settings::State::new(&self.cfg, &self.paths, self.rows.len());
         Task::none()
     }
 
     fn close_settings(&mut self) -> Task<Message> {
-        self.page = match self.start_page {
-            WindowPage::Emoji => Page::Emoji,
-            WindowPage::List => Page::List,
+        self.page = match self.page_before_settings {
+            Page::Emoji => Page::Emoji,
+            Page::List | Page::Settings => Page::List,
         };
         // Settings may have changed the list (Delete all) or paste behaviour.
         if self.settings.changed {
@@ -1087,7 +1091,7 @@ impl cosmic::Application for App {
             settings,
             emoji: emoji_state,
             modifiers: Modifiers::empty(),
-            start_page,
+            page_before_settings: Page::List,
         };
         // Resident: stay hidden until the first `menu toggle`. The catalogue is built off
         // the UI thread meanwhile so the first picker open does not pay for it.
@@ -1233,7 +1237,6 @@ impl cosmic::Application for App {
                 if self.mapped {
                     self.switch_or_close(page)
                 } else {
-                    self.start_page = page;
                     self.show(page)
                 }
             }
@@ -1244,7 +1247,12 @@ impl cosmic::Application for App {
             Message::Emoji(m) => self.emoji.update(m, self.modifiers),
             Message::PasteText(text) => self.close_and(Job::Text(text)),
             Message::CopyText(text) => {
-                if let Err(e) = clipboard::copy(Some(crate::ingest::TEXT_MIME), text.as_bytes()) {
+                // Like a paste from the picker, a copy-only is not recorded in history.
+                let mime = crate::ingest::TEXT_MIME;
+                let hash = crate::store::content_hash(mime, text.as_bytes());
+                if let Err(e) = crate::skip::add(&self.paths.runtime_dir, &hash)
+                    .and_then(|()| clipboard::copy(Some(mime), text.as_bytes()))
+                {
                     return self.error(format!("{e:#}"));
                 }
                 self.set_footer(Footer::Info(strings::emoji_copied(&text)));

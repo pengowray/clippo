@@ -562,7 +562,12 @@ impl State {
             big = big.font(EMOJI_FONT);
         }
         let name = column![
-            text(g.name.as_str()).size(14),
+            text(g.name.as_str())
+                .size(14)
+                .wrapping(cosmic::iced::core::text::Wrapping::None)
+                .ellipsize(cosmic::iced::core::text::Ellipsize::End(
+                    cosmic::iced::core::text::EllipsizeHeightLimit::Lines(1),
+                )),
             text(code_points(shown))
                 .size(11)
                 .class(theme::Text::Custom(muted_text)),
