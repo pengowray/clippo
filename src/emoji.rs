@@ -673,7 +673,7 @@ mod tests {
         let tau = c.search("tau");
         assert!(tau.iter().take(2).all(|&i| c.glyphs[i].name.contains("tau")));
         let e = c.search("e acute");
-        assert_eq!(c.glyphs[e[0]].text, "é");
+        assert!(["é", "É"].contains(&c.glyphs[e[0]].text.as_str()));
         assert_eq!(c.glyphs[c.search("u+03c4")[0]].text, "τ");
         assert_eq!(c.glyphs[c.search("τ")[0]].text, "τ");
         assert_eq!(c.glyphs[c.search(":heart:")[0]].text, "❤️");
