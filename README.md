@@ -20,6 +20,8 @@ cargo build --release   # OCR is very slow in debug builds
 | `clippo watch` | Records clipboard history until stopped. Runs `wl-paste --watch clippo ingest`, an OCR worker for new images, and the service socket the other commands use. |
 | `clippo ingest` | Stores clipboard data from stdin. `wl-paste --watch` calls this. |
 | `clippo menu` | Opens the history picker in fuzzel. Selecting an entry copies it, then pastes it if `paste_on_select` is on. If the picker is already open, closes it. |
+| `clippo window` | Opens the history window (the fuzzel picker's replacement). Opening it again closes it. |
+| `clippo emoji` | Opens the emoji and symbol picker in the same window: emoji by category, accented letters, Greek, Cyrillic, maths and other text symbols, searchable by name (`tau`, `e acute`, `:heart:`, `U+03C4`). Picking one pastes it without recording it in history. Alt+click adds a favourite. |
 | `clippo plain [--paste \| --no-paste] [--markdown \| --no-markdown]` | Replaces the clipboard with plain text, then pastes it if `auto_paste` is on. For an image, uses the text found in it. Text that looks like Markdown has the Markdown syntax removed when `plain.strip_markdown` is on; the flags override the setting. |
 | `clippo copy <id> [--plain \| --no-markdown]` | Puts an entry on the clipboard without pasting. Offers every stored format (HTML, RTF) when the service is running. `--plain` offers only the text (an image's recognised text); `--no-markdown` offers the text with Markdown syntax removed. |
 | `clippo get <id> [--plain] [--strip-markdown]` | Writes an entry to stdout. With `--plain`, images output their OCR text (running OCR first if needed). `--strip-markdown` removes Markdown syntax from text. |
@@ -59,6 +61,7 @@ Notes:
 | `$XDG_CONFIG_HOME/clippo/config.toml` | Config (optional) |
 | `$XDG_DATA_HOME/clippo/history.db` | History database |
 | `$XDG_DATA_HOME/clippo/ocrs/` | ocrs models |
+| `$XDG_DATA_HOME/clippo/emoji.toml` | Emoji picker favourites, recent picks and skin tone |
 | `$XDG_CACHE_HOME/clippo/thumbs/` | Picker thumbnails |
 | `$XDG_STATE_HOME/clippo/clippo.log` | Errors from commands run by shortcuts |
 | `$XDG_RUNTIME_DIR/clippo.sock` | Service socket |
@@ -163,6 +166,12 @@ And for plain-text paste:
 - Name: `Paste as plain text`
 - Command: `clippo plain`
 - Shortcut: `Super+Alt+V`
+
+And for the emoji picker:
+
+- Name: `Emoji`
+- Command: `clippo emoji`
+- Shortcut: `Super+.` (the Windows key)
 
 Macros can be bound the same way, for example `clippo macro 2` to paste today's date.
 

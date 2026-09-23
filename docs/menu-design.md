@@ -731,3 +731,131 @@ The previous revision's questions were accepted. Remaining, with recommendations
 | Settings, OCR, no tesseract | `Tesseract is not installed.` | replaces the toggles |
 | Settings, section | `Macros` | |
 | Settings, Macros | `Format` / `Label` / `Add macro` / `Format codes` | |
+
+## 16. Emoji and symbol picker (`clippo emoji`)
+
+Status: built. Modelled on GNOME's and Windows' pickers (Super+. there) and Discord's
+(category tabs, favourites). The one fact the page must make immediate: **what Enter will
+insert, and what it will look like**.
+
+### 16.1 Window and process
+
+The picker is a second page of the same layer surface, not a second window: same
+800×500 overlay, same close-and-paste path, same resident process. `clippo emoji` sends
+`menu toggle emoji` to the service socket (falls back to an in-process window like
+`clippo window`). Toggle semantics: closed → open on the picker; open on the picker →
+close; open on the history list → switch to the picker. Super+. and Super+V work the same
+way inside the window, so the compositor shortcut and the in-window key agree.
+
+Known limit: without the service, the pid-file fallback can only open or close, so
+`clippo emoji` while an in-process history window is open closes it.
+
+Insertion goes through the macro path (`macros::paste_text`): copy, paste, put the
+previous clipboard back when `macros.restore_clipboard` is on. Not recorded in history:
+an emoji on the clipboard is a means, not something to come back for. Ctrl+Enter or
+Ctrl+click copies only, records nothing and keeps the window open.
+
+### 16.2 Layout
+
+```
++------------------------------------------------------------------------------------------------+
+| [ Search emoji, letters and symbols                                          ]  [ 12 matches ]  |
+| [🕘][😀][👋][🐻][🍔][✈️][⚽][💡][🔣][🏁][Áé][∑]                          [✋][✋🏻][✋🏼][✋🏽][✋🏾][✋🏿] |
+|------------------------------------------------------------------------------------------------|
+| 😀 😃 😄 😁 😆 😅 🤣 😂 🙂 🙃 🫠 😉 😊 😇 🥰 😍 🤩 😘 😗                                          |
+| ☺️ 😚 😙 🥲 😋 😛 😜 🤪 😝 🤑 🤗 🤭 🫢 🫣 🤫 🤔 🫡 🤐 🤨                                          |
+| ...                                                                                            |
+|------------------------------------------------------------------------------------------------|
+| ❤️  red heart                 [ ❤ ]      [ ❤︎ ]   [ ❤️ ]                                   [☆]  |
+|     U+2764 U+FE0F         Default: text   Text   Emoji                                          |
+|------------------------------------------------------------------------------------------------|
+| Enter paste · Ctrl+Enter copy only · Alt+Enter favourite · Ctrl+Tab next tab · Super+V history  |
++------------------------------------------------------------------------------------------------+
+```
+
+Regions, top to bottom:
+
+1. **Search**, focused on open. Matches names, GitHub shortcodes (`:heart:`), the
+   character itself and `U+03C4`. Every word must match; exact words rank above prefixes
+   above substrings, and at equal rank a shorter name wins, so `pi` lists π before
+   `pineapple` and `heart` lists `red heart` before `smiling face with heart-eyes`.
+   Search covers every tab at once and ignores the current tab.
+2. **Tabs**: favourites and recent, the nine Unicode emoji groups in emoji-test order,
+   then `Letters` (accented Latin grouped by base letter, other Latin, Greek, Cyrillic)
+   and `Text symbols` (punctuation, currency, letterlike, arrows, maths, technical,
+   shapes, boxes, other). Emoji are never repeated in the text tabs. At the right, the
+   **skin tone** selector: six hands, the chosen one outlined; it applies to the grid and
+   to Enter, and is remembered.
+3. **Grid**: 19 columns of 36 px cells. Section headings inside the grid (`E e`, `Greek`,
+   `Arrows`) instead of more tabs. Selection is accent-tinted; hover is lightened; both
+   never depend on colour alone because the strip below names the character. No per-cell
+   tooltips: 500 tooltip widgets would cost the first frame. Rows are built in chunks as
+   the user scrolls, like the history list.
+4. **Detail strip**: the hovered character, or the selected one when nothing is hovered.
+   Large glyph, name, code points. Then the chips:
+   - **Presentation variants**, only for characters Unicode gives both a text-style and an
+     emoji-style variation sequence (from `emoji-variation-sequences.txt`; 😀 has none, ❤
+     ☺ ⌚ do). Three chips: the bare character captioned `Default: text` or
+     `Default: emoji` (Unicode's `Emoji_Presentation` property, which is what an app does
+     with the bare code point), then `Text` (U+FE0E) and `Emoji` (U+FE0F). Clicking a chip
+     inserts exactly that form. The grid and Enter always use the fully qualified emoji
+     form, as GNOME and Windows do.
+   - **Skin tones** of this emoji, the six uniform ones. Multi-person emoji also have
+     mixed-tone forms; those are left out, the strip would not fit 26 chips.
+   - The **star** toggles favourite.
+5. **Footer**: key hints, and the same transient feedback as the list page.
+
+### 16.3 Keys and mouse
+
+| Key | Action |
+|---|---|
+| type | Search across every tab |
+| Arrows | Move the selection in the grid; Up and Down keep the column and skip headings |
+| Page Up / Page Down | Six rows |
+| Ctrl+Home / Ctrl+End | First / last cell |
+| Enter | Close and paste the selected character (with the chosen skin tone) |
+| Ctrl+Enter | Copy only; footer says `Copied 😀`; window stays open |
+| Alt+Enter | Add to or remove from favourites |
+| Ctrl+Tab / Ctrl+Shift+Tab | Next / previous tab (clears the search) |
+| Super+. | Close (or, from the history list, switch to the picker) |
+| Super+V | Switch to the history list (or close it) |
+| Escape | Clear the search, else close |
+| Ctrl+, | Settings; Escape returns to the picker |
+
+Mouse: click pastes, Ctrl+click copies only, **Alt+click favourites** (the request), hover
+updates the strip without moving the selection. Chips in the strip paste on click.
+
+### 16.4 Favourites, recents and the tone
+
+`$XDG_DATA_HOME/clippo/emoji.toml`: `favourites` (order added), `recent` (most recent
+first, 40 kept), `skin_tone`. The first tab shows `Favourites` then `Recent` as two
+sections, favourites not repeated in recent. A recent pick with a tone maps back to its
+base emoji. The picker opens on that tab when it has anything, else on smileys. Empty
+state: `Nothing picked yet` / `Emoji you pick show up here. Alt+click one to add it to
+favourites`.
+
+### 16.5 Rendering
+
+cosmic-text's fallback picks a monochrome font (DejaVu Sans) for many emoji, so every
+emoji is drawn with the font family `Noto Color Emoji` asked for by name; letters and text
+symbols use the UI font. The `Text` and `Default` chips use the UI font on purpose: they
+show what a text-style form looks like. If the emoji font is missing the fallback is
+monochrome, and nothing else breaks.
+
+### 16.6 Strings
+
+| Where | String | Note |
+|---|---|---|
+| Search field, placeholder | `Search emoji, letters and symbols` | |
+| Header, count while searching | `12 matches` / `1 match` / `700 matches, first 600 shown` | |
+| Tab tooltips | `Favourites and recent` / `Smileys and emotion` / `People and body` / `Animals and nature` / `Food and drink` / `Travel and places` / `Activities` / `Objects` / `Symbols` / `Flags` / `Letters` / `Text symbols` | |
+| Skin tone tooltips | `Skin tone: default (yellow)` / `light` / `medium-light` / `medium` / `medium-dark` / `dark` | |
+| First tab, section headings | `Favourites` / `Recent` | |
+| Letters tab, section headings | `A a` ... `Z z` / `Other Latin` / `Greek` / `Cyrillic` | |
+| Text symbols tab, section headings | `Punctuation` / `Currency` / `Letterlike and numbers` / `Arrows` / `Maths` / `Technical` / `Shapes` / `Boxes and blocks` / `Other symbols` | |
+| Strip, variant captions | `Default: text` or `Default: emoji` / `Text` / `Emoji` | |
+| Strip, star tooltip | `Add to favourites (Alt+click)` / `Remove from favourites` | |
+| Empty state | `Nothing picked yet` / `Emoji you pick show up here. Alt+click one to add it to favourites` | first tab only |
+| Empty search | `No matches for "foo"` + `Clear search` | shared with the list |
+| Footer, hints | `Enter paste · Ctrl+Enter copy only · Alt+Enter favourite · Ctrl+Tab next tab · Super+V history` | |
+| Footer, after Ctrl+Enter | `Copied 😀` | |
