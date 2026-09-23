@@ -320,6 +320,12 @@ impl Catalog {
         if let Some(i) = self.index_of(query.trim()) {
             hits.push((0, 0, i));
         }
+        // `:heart:` or `heart` as a GitHub shortcode names one emoji exactly.
+        if let Some(i) = emojis::get_by_shortcode(q.trim_matches(':'))
+            .and_then(|e| self.index_of(e.as_str()))
+        {
+            hits.push((0, 0, i));
+        }
         if let Some(c) = parse_code_point(&q)
             && let Some(&i) = self
                 .by_text
@@ -670,7 +676,9 @@ mod tests {
     fn search_ranks_words_first() {
         let c = catalog();
         let pi = c.search("pi");
-        assert!(c.glyphs[pi[0]].name.ends_with("letter pi"));
+        let top: Vec<&str> = pi.iter().take(5).map(|&i| c.glyphs[i].name.as_str()).collect();
+        assert!(top.iter().all(|n| n.split_whitespace().any(|w| w == "pi")), "{top:?}");
+        assert!(top.contains(&"greek small letter pi"), "{top:?}");
         assert!(pi.iter().any(|&i| c.glyphs[i].name == "pineapple"));
         let tau = c.search("tau");
         assert!(tau.iter().take(2).all(|&i| c.glyphs[i].name.contains("tau")));
