@@ -722,3 +722,24 @@ fn cell_style(selected: bool, hovered: bool, outline: bool) -> theme::Container<
         }
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn vertical_moves_keep_the_column_and_skip_headings() {
+        let a: Vec<usize> = (0..COLS + 3).collect();
+        let b: Vec<usize> = (100..100 + 5).collect();
+        let l = Layout::from_sections([(Some("A"), a.as_slice()), (Some("B"), b.as_slice())].into_iter());
+        // Lines: heading, row(19), row(3), heading, row(5).
+        assert_eq!(l.lines.len(), 5);
+        assert_eq!(l.cells.len(), COLS + 8);
+        assert_eq!(l.vertical(5, 1), COLS + 2); // second row has 3 cells: clamp to its last
+        assert_eq!(l.vertical(1, 1), COLS + 1);
+        assert_eq!(l.vertical(COLS + 1, 1), COLS + 3 + 1); // skips heading B
+        assert_eq!(l.vertical(COLS + 3 + 4, -2), 4);
+        assert_eq!(l.vertical(0, -1), 0);
+        assert_eq!(l.vertical(COLS + 7, 1), COLS + 7);
+    }
+}
