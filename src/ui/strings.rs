@@ -68,14 +68,14 @@ pub const DELETE: &str = "Delete";
 
 pub const MENU_PASTE: &str = "Paste";
 pub const MENU_COPY_ONLY: &str = "Copy only";
-/// Greyed on text rows.
+/// Submenu on image rows; greyed on text rows.
 pub const SAVE_IMAGE: &str = "Save image";
-/// `Save image (PNG)`: writes the stored bytes to the Pictures folder.
-pub fn save_image(format: &str) -> String {
-    format!("Save image ({format})")
+/// First item in the submenu: `WEBP (original)` writes the stored bytes to the Pictures folder.
+pub fn save_original(format: &str) -> String {
+    format!("{format} (original)")
 }
-pub const SAVE_AS_PNG: &str = "Save as PNG";
-pub const SAVE_AS_JPG: &str = "Save as JPG";
+pub const SAVE_PNG: &str = "PNG";
+pub const SAVE_JPG: &str = "JPG";
 /// For images stored as WebP, GIF and so on, which some apps won't paste.
 pub const COPY_AS_PNG: &str = "Copy as PNG";
 pub const FOOTER_COPIED_AS_PNG: &str = "Copied as PNG. Added to the top of the history.";

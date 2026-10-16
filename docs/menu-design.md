@@ -258,11 +258,11 @@ Shift+Enter on an image whose OCR is still pending: wait up to 3 s for it, foote
   `F`, the image icon or `x` does that action without a normal paste.
 - Right-click a row: context menu with `Paste`, `Paste as plain text`, `Paste with
   formatting`, `Paste the image`, `Paste without Markdown` (only on rows where Markdown was
-  detected), `Copy only`, `Copy as PNG` (images not stored as PNG), then the save items, then
-  `Delete`. Unavailable items are greyed, not hidden.
-- Save items, images only: `Save image (WEBP)` writes the stored bytes unchanged; `Save as
-  PNG` and `Save as JPG` convert, and each is left out when the image is already in that
-  format. A text row shows one greyed `Save image`. Files go to the Pictures folder (else the
+  detected), `Copy only`, `Copy as PNG` (images not stored as PNG), the `Save image`
+  submenu, then `Delete`. Unavailable items are greyed, not hidden.
+- `Save image` submenu, images only: `WEBP (original)` writes the stored bytes unchanged;
+  `PNG` and `JPG` convert, and each is left out when the image is already in that format.
+  On a text row `Save image` is a greyed item with no submenu. Files go to the Pictures folder (else the
   home directory) as `clippo-YYYYMMDD-HHMMSS.<ext>`, with `-2`, `-3` added on a clash. JPG
   has no transparency, so transparent pixels become white. There is no file chooser: the
   window closes when another surface takes focus (see below), so the footer names the path
@@ -683,7 +683,8 @@ The previous revision's questions were accepted. Remaining, with recommendations
 | Row action, greyed tooltip | `Not an image` | image button, text entry |
 | Row action, tooltip | `Delete` | `x`, hovered row only |
 | Row context menu | `Paste` / `Paste as plain text` / `Paste with formatting` / `Paste the image` / `Paste without Markdown` / `Copy only` / `Copy as PNG` / `Save image (WEBP)` / `Save as PNG` / `Save as JPG` / `Delete` | unavailable items greyed; `Paste without Markdown` only on Markdown rows; `Copy as PNG` and the save items only on image rows (see 6) |
-| Row context menu, text row | `Save image` | greyed |
+| Row context menu, `Save image` submenu | `WEBP (original)` / `PNG` / `JPG` | stored format first; the format it is already in is left out of the other two |
+| Row context menu, text row | `Save image` | greyed, no submenu |
 | Footer, after saving an image | `Saved to ~/Pictures/clippo-20261016-142233.png` | path as written |
 | Footer, error | `Couldn't save image: <error>` | |
 | Footer, after Copy as PNG | `Copied as PNG. Added to the top of the history.` | |
