@@ -70,12 +70,27 @@ pub const MENU_PASTE: &str = "Paste";
 pub const MENU_COPY_ONLY: &str = "Copy only";
 /// Submenu on image rows; greyed on text rows.
 pub const SAVE_IMAGE: &str = "Save image";
-/// First item in the submenu: `WEBP (original)` writes the stored bytes to the Pictures folder.
+/// First item in the submenu: `WEBP (original)...` saves the stored bytes unchanged.
+/// The `...` means a save dialog opens.
 pub fn save_original(format: &str) -> String {
-    format!("{format} (original)")
+    format!("{format} (original)...")
 }
-pub const SAVE_PNG: &str = "PNG";
-pub const SAVE_JPG: &str = "JPG";
+pub const SAVE_PNG: &str = "PNG...";
+pub const SAVE_JPG: &str = "JPG...";
+pub const SAVE_DIALOG_TITLE: &str = "Save image";
+/// File type filter in the save dialog: `PNG image`.
+pub fn save_filter(format: &str) -> String {
+    format!("{format} image")
+}
+pub const COPY_PATH: &str = "Copy path";
+pub fn footer_copied_path(path: &str) -> String {
+    format!("Copied {path}")
+}
+pub const NOTIFY_IMAGE_SAVED_TITLE: &str = "Image saved";
+pub const NOTIFY_SAVE_FAILED_TITLE: &str = "Couldn't save image";
+/// Save dialog errors, shown in the notification body.
+pub const ENTRY_GONE: &str = "The item is no longer in the history";
+pub const NOT_A_LOCAL_FILE: &str = "The chosen location isn't a local file";
 /// For images stored as WebP, GIF and so on, which some apps won't paste.
 pub const COPY_AS_PNG: &str = "Copy as PNG";
 pub const FOOTER_COPIED_AS_PNG: &str = "Copied as PNG. Added to the top of the history.";

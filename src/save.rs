@@ -106,6 +106,51 @@ fn unique_path(dir: &Path, stamp: &str, ext: &str) -> PathBuf {
         .expect("unbounded range")
 }
 
+/// File name for a new save: `clippo-YYYYMMDD-HHMMSS.<ext>`.
+pub fn suggested_name(mime: &str, format: SaveFormat, now: &chrono::DateTime<chrono::Local>) -> String {
+    format!(
+        "clippo-{}.{}",
+        now.format("%Y%m%d-%H%M%S"),
+        extension(mime, format)
+    )
+}
+
+/// The format a path chosen in the save dialog asks for: its extension wins when it is PNG,
+/// JPG or the stored format, else `chosen`.
+pub fn format_for_path(mime: &str, path: &Path, chosen: SaveFormat) -> SaveFormat {
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(str::to_ascii_lowercase);
+    match ext.as_deref() {
+        Some("png") => SaveFormat::Png,
+        Some("jpg" | "jpeg") => SaveFormat::Jpeg,
+        Some(e) if e == extension_for_mime(mime) => SaveFormat::Original,
+        _ => chosen,
+    }
+}
+
+/// Add the format's extension when the path has none.
+pub fn with_extension(path: PathBuf, mime: &str, format: SaveFormat) -> PathBuf {
+    if path.extension().is_some() {
+        path
+    } else {
+        path.with_extension(extension(mime, format))
+    }
+}
+
+/// Encode and write the image to `path`, replacing any file there.
+pub fn write(path: &Path, mime: &str, content: &[u8], format: SaveFormat) -> Result<()> {
+    let bytes = encode(mime, content, format)?;
+    let dir = path.parent().unwrap_or(Path::new("."));
+    std::fs::create_dir_all(dir).with_context(|| format!("could not create {}", dir.display()))?;
+    // Write then rename so a half-written file never sits under the final name.
+    let tmp = dir.join(format!(".clippo-save.{}.tmp", std::process::id()));
+    std::fs::write(&tmp, &bytes).with_context(|| format!("could not write {}", tmp.display()))?;
+    std::fs::rename(&tmp, path).with_context(|| format!("could not write {}", path.display()))?;
+    Ok(())
+}
+
 /// Write the image to a new file in `dir` and return its path.
 pub fn save(
     dir: &Path,
@@ -114,14 +159,9 @@ pub fn save(
     format: SaveFormat,
     now: &chrono::DateTime<chrono::Local>,
 ) -> Result<PathBuf> {
-    let bytes = encode(mime, content, format)?;
-    std::fs::create_dir_all(dir).with_context(|| format!("could not create {}", dir.display()))?;
     let stamp = now.format("%Y%m%d-%H%M%S").to_string();
     let out = unique_path(dir, &stamp, extension(mime, format));
-    // Write then rename so a half-written file never sits under the final name.
-    let tmp = dir.join(format!(".clippo-{stamp}.{}.tmp", std::process::id()));
-    std::fs::write(&tmp, &bytes).with_context(|| format!("could not write {}", tmp.display()))?;
-    std::fs::rename(&tmp, &out).with_context(|| format!("could not write {}", out.display()))?;
+    write(&out, mime, content, format)?;
     Ok(out)
 }
 
@@ -204,6 +244,31 @@ mod tests {
                 .unwrap()
                 .all(|e| { !e.unwrap().file_name().to_str().unwrap().ends_with(".tmp") })
         );
+    }
+
+    #[test]
+    fn extension_in_chosen_path_picks_format() {
+        let p = |s: &str| PathBuf::from(s);
+        let f = |path: &str, chosen| format_for_path("image/webp", &p(path), chosen);
+        assert_eq!(f("/a/b.PNG", SaveFormat::Jpeg), SaveFormat::Png);
+        assert_eq!(f("/a/b.jpeg", SaveFormat::Png), SaveFormat::Jpeg);
+        assert_eq!(f("/a/b.webp", SaveFormat::Png), SaveFormat::Original);
+        assert_eq!(f("/a/b.gif", SaveFormat::Png), SaveFormat::Png);
+        assert_eq!(f("/a/b", SaveFormat::Jpeg), SaveFormat::Jpeg);
+        assert_eq!(
+            with_extension(p("/a/b"), "image/webp", SaveFormat::Original),
+            p("/a/b.webp")
+        );
+        assert_eq!(with_extension(p("/a/b.x"), "image/webp", SaveFormat::Png), p("/a/b.x"));
+    }
+
+    #[test]
+    fn write_replaces_existing_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("x.png");
+        std::fs::write(&out, b"old").unwrap();
+        write(&out, "image/png", &rgba_png(), SaveFormat::Png).unwrap();
+        assert_eq!(std::fs::read(&out).unwrap(), rgba_png());
     }
 
     #[test]

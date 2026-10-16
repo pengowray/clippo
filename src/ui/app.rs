@@ -115,8 +115,10 @@ pub enum RowAction {
     PasteImage,
     PasteNoMarkdown,
     CopyOnly,
-    /// Write the image to a file in the Pictures folder (design 6); images only.
-    SaveImage(SaveFormat),
+    /// Ctrl+S: write the image as stored to a new file in the Pictures folder (design 6).
+    QuickSave,
+    /// `Save image` submenu: close, then ask where to save in this format (design 6).
+    SaveAs(SaveFormat),
     /// Put a PNG conversion of the image on the clipboard; ingest records it as a new entry.
     CopyAsPng,
     Delete,
@@ -132,6 +134,8 @@ pub enum Page {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Footer {
     Undo,
+    /// After Ctrl+S: the path, with a Copy path button.
+    Saved(PathBuf),
     Info(String),
     Error(String),
 }
@@ -181,8 +185,12 @@ pub enum Message {
     /// The list scrolled to this relative offset (0 top, 1 bottom).
     Scrolled(f32),
     OcrWaited(i64, bool),
-    /// An image was written to disk, or the attempt failed.
+    /// Ctrl+S wrote an image to disk, or the attempt failed.
     Saved(Result<PathBuf, String>),
+    /// The save dialog finished: the path written, `None` if cancelled, or the error.
+    SavedAs(Result<Option<PathBuf>, String>),
+    /// Put a saved image's path on the clipboard.
+    CopyPath(PathBuf),
     /// A PNG conversion is on the clipboard, or the attempt failed.
     CopiedAsPng(Result<(), String>),
     /// `menu toggle [emoji]` from the service (resident mode).
@@ -631,7 +639,24 @@ impl App {
                     paste,
                 })
             }
-            RowAction::SaveImage(format) => {
+            RowAction::SaveAs(format) => {
+                if !row.is_image() {
+                    return self.error(strings::NOT_AN_IMAGE);
+                }
+                self.closing = true;
+                self.mapped = false;
+                let dialog = crate::ui::save_as::run(
+                    self.paths.db.clone(),
+                    id,
+                    row.mime.clone(),
+                    format,
+                    CLOSE_WAIT,
+                );
+                let run = iced::Task::future(dialog)
+                    .map(|r| cosmic::Action::App(Message::SavedAs(r)));
+                Task::batch([destroy_layer_surface(self.surface), run])
+            }
+            RowAction::QuickSave => {
                 if !row.is_image() {
                     return self.error(strings::NOT_AN_IMAGE);
                 }
@@ -648,7 +673,7 @@ impl App {
                 let mime = row.mime.clone();
                 iced::Task::future(async move {
                     tokio::task::spawn_blocking(move || {
-                        save::save(&dir, &mime, &content, format, &chrono::Local::now())
+                        save::save(&dir, &mime, &content, SaveFormat::Original, &chrono::Local::now())
                             .map_err(|e| format!("{e:#}"))
                     })
                     .await
@@ -803,7 +828,7 @@ impl App {
             },
             Key::Character(_) if mods.control() && ch.as_deref() == Some("s") => {
                 match self.selected_row() {
-                    Some(i) => self.act(i, RowAction::SaveImage(SaveFormat::Original)),
+                    Some(i) => self.act(i, RowAction::QuickSave),
                     None => Task::none(),
                 }
             }
@@ -918,6 +943,16 @@ impl App {
                 text::caption(strings::FOOTER_DELETED),
                 widget::button::link(strings::FOOTER_UNDO)
                     .on_press(Message::Undo)
+                    .padding(0)
+                    .font_size(12),
+            ]
+            .spacing(6)
+            .align_y(iced::Alignment::Center)
+            .into(),
+            Some((Footer::Saved(path), _)) => row![
+                text::caption(strings::footer_image_saved(&save::display_path(path))),
+                widget::button::link(strings::COPY_PATH)
+                    .on_press(Message::CopyPath(path.clone()))
                     .padding(0)
                     .font_size(12),
             ]
@@ -1274,12 +1309,39 @@ impl cosmic::Application for App {
             }
             Message::Saved(result) => {
                 match result {
-                    Ok(path) => self.set_footer(Footer::Info(strings::footer_image_saved(
-                        &save::display_path(&path),
-                    ))),
+                    Ok(path) => self.set_footer(Footer::Saved(path)),
                     Err(e) => self.set_footer(Footer::Error(strings::footer_image_save_failed(&e))),
                 }
                 Task::none()
+            }
+            Message::SavedAs(result) => {
+                let notify = match result {
+                    Ok(Some(path)) => crate::ui::notify::image_saved(path),
+                    Ok(None) => Task::none(),
+                    Err(e) => {
+                        crate::log(&format!("save as: {e}"));
+                        crate::ui::notify::save_failed(e)
+                    }
+                };
+                if self.resident() {
+                    notify
+                } else {
+                    Task::batch([notify, iced::exit()])
+                }
+            }
+            Message::CopyPath(path) => {
+                let text = path.to_string_lossy().into_owned();
+                if let Err(e) = clipboard::copy(None, text.as_bytes()) {
+                    return self.error(format!("{e:#}"));
+                }
+                self.set_footer(Footer::Info(strings::footer_copied_path(&save::display_path(
+                    &path,
+                ))));
+                // `ingest` records the path as a new entry; show it shortly.
+                iced::Task::future(async {
+                    tokio::time::sleep(Duration::from_millis(300)).await
+                })
+                .map(|()| cosmic::Action::App(Message::Reload))
             }
             Message::CopiedAsPng(result) => match result {
                 Ok(()) => {

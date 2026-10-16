@@ -232,7 +232,7 @@ list regardless of focus, so there is no tab-switching between search and list.
 | Shift+Enter | Paste as plain text (image: OCR text). On a row where `T` is greyed, the footer shows the greyed tooltip text instead |
 | Alt+Enter | Paste without Markdown (text entries only; works whether or not Markdown was detected, detection only controls the button) |
 | Ctrl+Enter | Copy to clipboard only, no paste, window stays open. For when paste_on_select is unwanted once |
-| Ctrl+S | Save the selected image to the Pictures folder in its stored format. On a text row the footer shows `Not an image` |
+| Ctrl+S | Save the selected image to the Pictures folder in its stored format, no dialog. The footer shows the path with a `Copy path` button. On a text row the footer shows `Not an image` |
 | Shift+Delete | Delete selected entry; footer shows undo for 6 s (plain Delete edits the search text) |
 | Ctrl+Z | Undo the last delete (while the footer shows it). iced's text input may swallow Ctrl+Z; verify against the libcosmic pin. The footer `Undo` button is the guaranteed path |
 | Alt+1 to Alt+9 | Paste macro N (shown on the buttons) |
@@ -260,13 +260,18 @@ Shift+Enter on an image whose OCR is still pending: wait up to 3 s for it, foote
   formatting`, `Paste the image`, `Paste without Markdown` (only on rows where Markdown was
   detected), `Copy only`, `Copy as PNG` (images not stored as PNG), the `Save image`
   submenu, then `Delete`. Unavailable items are greyed, not hidden.
-- `Save image` submenu, images only: `WEBP (original)` writes the stored bytes unchanged;
-  `PNG` and `JPG` convert, and each is left out when the image is already in that format.
-  On a text row `Save image` is a greyed item with no submenu. Files go to the Pictures folder (else the
-  home directory) as `clippo-YYYYMMDD-HHMMSS.<ext>`, with `-2`, `-3` added on a clash. JPG
-  has no transparency, so transparent pixels become white. There is no file chooser: the
-  window closes when another surface takes focus (see below), so the footer names the path
-  instead.
+- `Save image` submenu, images only: `WEBP (original)...` saves the stored bytes unchanged;
+  `PNG...` and `JPG...` convert, and each is left out when the image is already in that
+  format. On a text row `Save image` is a greyed item with no submenu.
+- Each submenu item closes the window, then opens the system save dialog (XDG portal),
+  starting in the Pictures folder (else home) with the name `clippo-YYYYMMDD-HHMMSS.<ext>`.
+  The window must close first: it is an overlay above every other window and closes when it
+  loses focus. A name typed with `.png`, `.jpg`/`.jpeg` or the stored format's extension
+  picks that format; a name with no extension gets the chosen format's. JPG has no
+  transparency, so transparent pixels become white.
+- After the dialog: a notification `Image saved` with the path and a `Copy path` button
+  (usable for 30 minutes, including from the notification list). Cancelling is silent. A
+  failure sends `Couldn't save image` with the error.
 - `Copy as PNG` is for apps that refuse a WebP or GIF paste. It puts a PNG conversion on the
   clipboard and the window stays open; `clippo watch` records it as a new entry at the top,
   so Enter then pastes it.
@@ -683,9 +688,16 @@ The previous revision's questions were accepted. Remaining, with recommendations
 | Row action, greyed tooltip | `Not an image` | image button, text entry |
 | Row action, tooltip | `Delete` | `x`, hovered row only |
 | Row context menu | `Paste` / `Paste as plain text` / `Paste with formatting` / `Paste the image` / `Paste without Markdown` / `Copy only` / `Copy as PNG` / `Save image (WEBP)` / `Save as PNG` / `Save as JPG` / `Delete` | unavailable items greyed; `Paste without Markdown` only on Markdown rows; `Copy as PNG` and the save items only on image rows (see 6) |
-| Row context menu, `Save image` submenu | `WEBP (original)` / `PNG` / `JPG` | stored format first; the format it is already in is left out of the other two |
+| Row context menu, `Save image` submenu | `WEBP (original)...` / `PNG...` / `JPG...` | stored format first; the format it is already in is left out of the other two; each opens the save dialog |
+| Save dialog, title | `Save image` | |
+| Save dialog, file type | `PNG image` | format of the chosen item |
+| Notification, after the save dialog | title `Image saved` body `~/Pictures/clippo-20261016-142233.png`, button `Copy path` | |
+| Notification, save failed | title `Couldn't save image` body `<error>` | |
+| Notification body, item deleted meanwhile | `The item is no longer in the history` | |
+| Notification body, non-local location | `The chosen location isn't a local file` | |
 | Row context menu, text row | `Save image` | greyed, no submenu |
-| Footer, after saving an image | `Saved to ~/Pictures/clippo-20261016-142233.png` | path as written |
+| Footer, after Ctrl+S | `Saved to ~/Pictures/clippo-20261016-142233.png` + `Copy path` | `Copy path` is a link button |
+| Footer, after Copy path | `Copied ~/Pictures/clippo-20261016-142233.png` | the full path goes on the clipboard |
 | Footer, error | `Couldn't save image: <error>` | |
 | Footer, after Copy as PNG | `Copied as PNG. Added to the top of the history.` | |
 | Footer, error | `Couldn't convert to PNG: <error>` | |

@@ -5,6 +5,7 @@ pub mod emoji;
 pub mod list;
 pub mod notify;
 pub mod rows;
+pub mod save_as;
 pub mod settings;
 pub mod strings;
 

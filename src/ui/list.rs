@@ -427,26 +427,26 @@ fn context_items(idx: usize, r: &Row) -> Vec<widget::menu::Tree<Message>> {
     }
     list.push(MenuItem::Divider);
     // A "Save image" submenu: the stored format unchanged, then a conversion to each of PNG
-    // and JPG the image is not already in.
+    // and JPG the image is not already in. Each opens the save dialog.
     if r.is_image() {
         let stored = save::stored_format(&r.mime);
         let mut formats = vec![MenuItem::Button(
             strings::save_original(&save::format_label(&r.mime)).into(),
             None,
-            act(RowAction::SaveImage(SaveFormat::Original)),
+            act(RowAction::SaveAs(SaveFormat::Original)),
         )];
         if stored != Some(SaveFormat::Png) {
             formats.push(MenuItem::Button(
                 strings::SAVE_PNG.into(),
                 None,
-                act(RowAction::SaveImage(SaveFormat::Png)),
+                act(RowAction::SaveAs(SaveFormat::Png)),
             ));
         }
         if stored != Some(SaveFormat::Jpeg) {
             formats.push(MenuItem::Button(
                 strings::SAVE_JPG.into(),
                 None,
-                act(RowAction::SaveImage(SaveFormat::Jpeg)),
+                act(RowAction::SaveAs(SaveFormat::Jpeg)),
             ));
         }
         list.push(MenuItem::Folder(strings::SAVE_IMAGE.into(), formats));
@@ -454,7 +454,7 @@ fn context_items(idx: usize, r: &Row) -> Vec<widget::menu::Tree<Message>> {
         list.push(MenuItem::ButtonDisabled(
             strings::SAVE_IMAGE.into(),
             None,
-            act(RowAction::SaveImage(SaveFormat::Original)),
+            act(RowAction::SaveAs(SaveFormat::Original)),
         ));
     }
     list.push(MenuItem::Divider);
