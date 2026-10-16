@@ -232,6 +232,7 @@ list regardless of focus, so there is no tab-switching between search and list.
 | Shift+Enter | Paste as plain text (image: OCR text). On a row where `T` is greyed, the footer shows the greyed tooltip text instead |
 | Alt+Enter | Paste without Markdown (text entries only; works whether or not Markdown was detected, detection only controls the button) |
 | Ctrl+Enter | Copy to clipboard only, no paste, window stays open. For when paste_on_select is unwanted once |
+| Ctrl+S | Save the selected image to the Pictures folder in its stored format. On a text row the footer shows `Not an image` |
 | Shift+Delete | Delete selected entry; footer shows undo for 6 s (plain Delete edits the search text) |
 | Ctrl+Z | Undo the last delete (while the footer shows it). iced's text input may swallow Ctrl+Z; verify against the libcosmic pin. The footer `Undo` button is the guaranteed path |
 | Alt+1 to Alt+9 | Paste macro N (shown on the buttons) |
@@ -257,7 +258,18 @@ Shift+Enter on an image whose OCR is still pending: wait up to 3 s for it, foote
   `F`, the image icon or `x` does that action without a normal paste.
 - Right-click a row: context menu with `Paste`, `Paste as plain text`, `Paste with
   formatting`, `Paste the image`, `Paste without Markdown` (only on rows where Markdown was
-  detected), `Copy only`, `Delete`. Unavailable items are greyed, not hidden.
+  detected), `Copy only`, `Copy as PNG` (images not stored as PNG), then the save items, then
+  `Delete`. Unavailable items are greyed, not hidden.
+- Save items, images only: `Save image (WEBP)` writes the stored bytes unchanged; `Save as
+  PNG` and `Save as JPG` convert, and each is left out when the image is already in that
+  format. A text row shows one greyed `Save image`. Files go to the Pictures folder (else the
+  home directory) as `clippo-YYYYMMDD-HHMMSS.<ext>`, with `-2`, `-3` added on a clash. JPG
+  has no transparency, so transparent pixels become white. There is no file chooser: the
+  window closes when another surface takes focus (see below), so the footer names the path
+  instead.
+- `Copy as PNG` is for apps that refuse a WebP or GIF paste. It puts a PNG conversion on the
+  clipboard and the window stays open; `clippo watch` records it as a new entry at the top,
+  so Enter then pastes it.
 - Scroll wheel scrolls the list; the selected row does not follow the scroll.
 - Click outside the window: closes it. The compositor moves keyboard focus to the surface
   that was clicked, the window sees the focus loss (`LayerEvent::Unfocused`) and unmaps.
@@ -670,7 +682,12 @@ The previous revision's questions were accepted. Remaining, with recommendations
 | Row action, tooltip | `Paste the image` | image button, enabled |
 | Row action, greyed tooltip | `Not an image` | image button, text entry |
 | Row action, tooltip | `Delete` | `x`, hovered row only |
-| Row context menu | `Paste` / `Paste as plain text` / `Paste with formatting` / `Paste the image` / `Paste without Markdown` / `Copy only` / `Delete` | unavailable items greyed; `Paste without Markdown` only on Markdown rows |
+| Row context menu | `Paste` / `Paste as plain text` / `Paste with formatting` / `Paste the image` / `Paste without Markdown` / `Copy only` / `Copy as PNG` / `Save image (WEBP)` / `Save as PNG` / `Save as JPG` / `Delete` | unavailable items greyed; `Paste without Markdown` only on Markdown rows; `Copy as PNG` and the save items only on image rows (see 6) |
+| Row context menu, text row | `Save image` | greyed |
+| Footer, after saving an image | `Saved to ~/Pictures/clippo-20261016-142233.png` | path as written |
+| Footer, error | `Couldn't save image: <error>` | |
+| Footer, after Copy as PNG | `Copied as PNG. Added to the top of the history.` | |
+| Footer, error | `Couldn't convert to PNG: <error>` | |
 | Macro column heading | `Paste` | |
 | Macro button | `14:00` / `2026-09-17` / `2026-09-17 14:00:05` | live values |
 | Macro button, accelerator | `Alt+1` | small |

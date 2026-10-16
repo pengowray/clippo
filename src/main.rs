@@ -8,6 +8,7 @@ mod menu;
 mod ocr;
 mod paste;
 mod plain;
+mod save;
 mod service;
 mod skip;
 mod store;

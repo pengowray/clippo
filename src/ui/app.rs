@@ -29,6 +29,7 @@ use cosmic::{Element, theme};
 
 use crate::clipboard::{self, CopyMode};
 use crate::config::{Config, OcrEngineKind, Paths};
+use crate::save::{self, SaveFormat};
 use crate::store::{OcrStatus, Store};
 use crate::thumbs;
 use crate::ui::list;
@@ -114,6 +115,10 @@ pub enum RowAction {
     PasteImage,
     PasteNoMarkdown,
     CopyOnly,
+    /// Write the image to a file in the Pictures folder (design 6); images only.
+    SaveImage(SaveFormat),
+    /// Put a PNG conversion of the image on the clipboard; ingest records it as a new entry.
+    CopyAsPng,
     Delete,
 }
 
@@ -176,6 +181,10 @@ pub enum Message {
     /// The list scrolled to this relative offset (0 top, 1 bottom).
     Scrolled(f32),
     OcrWaited(i64, bool),
+    /// An image was written to disk, or the attempt failed.
+    Saved(Result<PathBuf, String>),
+    /// A PNG conversion is on the clipboard, or the attempt failed.
+    CopiedAsPng(Result<(), String>),
     /// `menu toggle [emoji]` from the service (resident mode).
     Toggle(WindowPage),
     Done(Result<(), JobError>),
@@ -622,6 +631,52 @@ impl App {
                     paste,
                 })
             }
+            RowAction::SaveImage(format) => {
+                if !row.is_image() {
+                    return self.error(strings::NOT_AN_IMAGE);
+                }
+                let content = match store.content(id) {
+                    Ok(Some(c)) => c,
+                    Ok(None) => return Task::none(),
+                    Err(e) => {
+                        return self.error(strings::footer_image_save_failed(&format!("{e:#}")));
+                    }
+                };
+                let Some(dir) = save::default_dir() else {
+                    return self.error(strings::footer_image_save_failed("no home directory"));
+                };
+                let mime = row.mime.clone();
+                iced::Task::future(async move {
+                    tokio::task::spawn_blocking(move || {
+                        save::save(&dir, &mime, &content, format, &chrono::Local::now())
+                            .map_err(|e| format!("{e:#}"))
+                    })
+                    .await
+                    .unwrap_or_else(|e| Err(e.to_string()))
+                })
+                .map(|r| cosmic::Action::App(Message::Saved(r)))
+            }
+            RowAction::CopyAsPng => {
+                if !row.is_image() {
+                    return self.error(strings::NOT_AN_IMAGE);
+                }
+                let content = match store.content(id) {
+                    Ok(Some(c)) => c,
+                    Ok(None) => return Task::none(),
+                    Err(e) => return self.error(strings::footer_convert_failed(&format!("{e:#}"))),
+                };
+                let mime = row.mime.clone();
+                iced::Task::future(async move {
+                    tokio::task::spawn_blocking(move || {
+                        save::encode(&mime, &content, SaveFormat::Png)
+                            .and_then(|png| clipboard::copy(Some("image/png"), &png))
+                            .map_err(|e| format!("{e:#}"))
+                    })
+                    .await
+                    .unwrap_or_else(|e| Err(e.to_string()))
+                })
+                .map(|r| cosmic::Action::App(Message::CopiedAsPng(r)))
+            }
             RowAction::Delete => {
                 match store.delete(id) {
                     Ok(true) => {}
@@ -746,6 +801,12 @@ impl App {
                 }
                 _ => Task::none(),
             },
+            Key::Character(_) if mods.control() && ch.as_deref() == Some("s") => {
+                match self.selected_row() {
+                    Some(i) => self.act(i, RowAction::SaveImage(SaveFormat::Original)),
+                    None => Task::none(),
+                }
+            }
             Key::Named(Named::Delete) if mods.shift() => match self.selected_row() {
                 Some(i) => self.act(i, RowAction::Delete),
                 None => Task::none(),
@@ -1211,6 +1272,26 @@ impl cosmic::Application for App {
                 }
                 Task::none()
             }
+            Message::Saved(result) => {
+                match result {
+                    Ok(path) => self.set_footer(Footer::Info(strings::footer_image_saved(
+                        &save::display_path(&path),
+                    ))),
+                    Err(e) => self.set_footer(Footer::Error(strings::footer_image_save_failed(&e))),
+                }
+                Task::none()
+            }
+            Message::CopiedAsPng(result) => match result {
+                Ok(()) => {
+                    self.set_footer(Footer::Info(strings::FOOTER_COPIED_AS_PNG.into()));
+                    // `ingest` records the PNG as a new entry at the top; show it shortly.
+                    iced::Task::future(async {
+                        tokio::time::sleep(Duration::from_millis(300)).await
+                    })
+                    .map(|()| cosmic::Action::App(Message::Reload))
+                }
+                Err(e) => self.error(strings::footer_convert_failed(&e)),
+            },
             Message::OcrWaited(id, ok) => {
                 if self.closing {
                     return Task::none();

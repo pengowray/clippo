@@ -10,6 +10,7 @@ use cosmic::{Element, Theme, theme};
 
 use crate::ui::app::{App, Item, MACRO_COLUMN_WIDTH, Message, RowAction};
 use crate::config::Macro;
+use crate::save::{self, SaveFormat};
 use crate::ui::rows::{Kind, Ocr, Row};
 use crate::ui::strings;
 
@@ -357,43 +358,109 @@ impl widget::menu::Action for RowMenu {
 /// Design 6: unavailable items are greyed, not hidden; `Paste without Markdown` appears
 /// only on rows where Markdown was detected.
 fn context_items(idx: usize, r: &Row) -> Vec<widget::menu::Tree<Message>> {
+    use std::borrow::Cow;
     use widget::menu::{Item as MenuItem, items};
     let act = |action| RowMenu { idx, action };
     let plain_ok = r.plain_disabled_reason().is_none();
-    let mut list = vec![MenuItem::Button(
-        strings::MENU_PASTE,
+    let mut list: Vec<MenuItem<RowMenu, Cow<'static, str>>> = vec![MenuItem::Button(
+        strings::MENU_PASTE.into(),
         None,
         act(RowAction::Paste),
     )];
     list.push(if plain_ok {
-        MenuItem::Button(strings::PASTE_AS_PLAIN_TEXT, None, act(RowAction::PastePlain))
+        MenuItem::Button(
+            strings::PASTE_AS_PLAIN_TEXT.into(),
+            None,
+            act(RowAction::PastePlain),
+        )
     } else {
-        MenuItem::ButtonDisabled(strings::PASTE_AS_PLAIN_TEXT, None, act(RowAction::PastePlain))
+        MenuItem::ButtonDisabled(
+            strings::PASTE_AS_PLAIN_TEXT.into(),
+            None,
+            act(RowAction::PastePlain),
+        )
     });
     list.push(if r.has_rich {
-        MenuItem::Button(strings::PASTE_FORMATTED, None, act(RowAction::PasteFormatted))
+        MenuItem::Button(
+            strings::PASTE_FORMATTED.into(),
+            None,
+            act(RowAction::PasteFormatted),
+        )
     } else {
-        MenuItem::ButtonDisabled(strings::PASTE_FORMATTED, None, act(RowAction::PasteFormatted))
+        MenuItem::ButtonDisabled(
+            strings::PASTE_FORMATTED.into(),
+            None,
+            act(RowAction::PasteFormatted),
+        )
     });
     list.push(if r.is_image() {
-        MenuItem::Button(strings::PASTE_IMAGE, None, act(RowAction::PasteImage))
+        MenuItem::Button(
+            strings::PASTE_IMAGE.into(),
+            None,
+            act(RowAction::PasteImage),
+        )
     } else {
-        MenuItem::ButtonDisabled(strings::PASTE_IMAGE, None, act(RowAction::PasteImage))
+        MenuItem::ButtonDisabled(
+            strings::PASTE_IMAGE.into(),
+            None,
+            act(RowAction::PasteImage),
+        )
     });
     if r.is_markdown {
         list.push(MenuItem::Button(
-            strings::PASTE_WITHOUT_MARKDOWN,
+            strings::PASTE_WITHOUT_MARKDOWN.into(),
             None,
             act(RowAction::PasteNoMarkdown),
         ));
     }
     list.push(MenuItem::Button(
-        strings::MENU_COPY_ONLY,
+        strings::MENU_COPY_ONLY.into(),
         None,
         act(RowAction::CopyOnly),
     ));
+    if r.is_image() && save::stored_format(&r.mime) != Some(SaveFormat::Png) {
+        list.push(MenuItem::Button(
+            strings::COPY_AS_PNG.into(),
+            None,
+            act(RowAction::CopyAsPng),
+        ));
+    }
     list.push(MenuItem::Divider);
-    list.push(MenuItem::Button(strings::DELETE, None, act(RowAction::Delete)));
+    // Save the image as stored, plus a conversion to each of PNG and JPG it is not already.
+    if r.is_image() {
+        let stored = save::stored_format(&r.mime);
+        list.push(MenuItem::Button(
+            strings::save_image(&save::format_label(&r.mime)).into(),
+            None,
+            act(RowAction::SaveImage(SaveFormat::Original)),
+        ));
+        if stored != Some(SaveFormat::Png) {
+            list.push(MenuItem::Button(
+                strings::SAVE_AS_PNG.into(),
+                None,
+                act(RowAction::SaveImage(SaveFormat::Png)),
+            ));
+        }
+        if stored != Some(SaveFormat::Jpeg) {
+            list.push(MenuItem::Button(
+                strings::SAVE_AS_JPG.into(),
+                None,
+                act(RowAction::SaveImage(SaveFormat::Jpeg)),
+            ));
+        }
+    } else {
+        list.push(MenuItem::ButtonDisabled(
+            strings::SAVE_IMAGE.into(),
+            None,
+            act(RowAction::SaveImage(SaveFormat::Original)),
+        ));
+    }
+    list.push(MenuItem::Divider);
+    list.push(MenuItem::Button(
+        strings::DELETE.into(),
+        None,
+        act(RowAction::Delete),
+    ));
     items(&HashMap::new(), list)
 }
 
