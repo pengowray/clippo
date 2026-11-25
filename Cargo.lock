@@ -883,6 +883,7 @@ dependencies = [
  "wayland-client",
  "wayland-protocols-misc",
  "wl-clipboard-rs",
+ "x11rb",
  "zbus",
 ]
 

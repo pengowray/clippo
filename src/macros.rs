@@ -97,10 +97,10 @@ fn current_entry(store: &Store) -> Option<i64> {
     let types = clipboard::list_types();
     let types: Vec<&str> = types.iter().map(String::as_str).collect();
     let (mime, data) = if let Some(t) = preferred_image_type(&types) {
-        let img = clipboard::paste(&["--no-newline", "--type", &t])?;
+        let img = clipboard::read(&t)?;
         (sniff_image(&img)?, img)
-    } else if types.iter().any(|t| t.starts_with("text/plain")) {
-        (TEXT_MIME, clipboard::paste(&["--no-newline", "--type", "text"])?)
+    } else if types.iter().any(|t| clipboard::is_text_type(t)) {
+        (TEXT_MIME, clipboard::read_text()?)
     } else {
         return None;
     };

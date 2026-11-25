@@ -1,11 +1,34 @@
 # clippo
 
-Clipboard history for Wayland (tested on COSMIC), with a fuzzel picker and OCR for copied images.
-Text and images you copy are stored in SQLite. Images show as thumbnails in the picker,
-and the text found in them is searchable.
+Clipboard history for Wayland (tested on COSMIC) and X11 (tested on GNOME), with a picker and
+OCR for copied images. Text and images you copy are stored in SQLite. Images show as thumbnails
+in the picker, and the text found in them is searchable.
 
-Requires `wl-clipboard` (`wl-paste`, `wl-copy`) and `fuzzel`. The compositor must support a
+## Desktops
+
+clippo uses the session type in `XDG_SESSION_TYPE` (`wayland` or `x11`). If it is not set,
+clippo uses Wayland when `WAYLAND_DISPLAY` is set, and X11 when only `DISPLAY` is set.
+`clippo watch` prints the session type it uses when it starts.
+
+| | Wayland (COSMIC) | X11 (GNOME on Xorg) | GNOME on Wayland |
+|---|---|---|---|
+| Recording history | yes | yes | no |
+| `clippo copy`, `plain`, `macro` | yes | yes | no |
+| Pasting | virtual keyboard or uinput | XTEST or uinput | no |
+| Picker (`clippo menu`) | fuzzel | rofi | no |
+| History window (`clippo window`) | yes | no | no |
+| Emoji picker (`clippo emoji`) | yes | no | no |
+
+Wayland needs `wl-clipboard` (`wl-paste`, `wl-copy`) and `fuzzel`, and a compositor with a
 data-control protocol (`ext_data_control_v1` or `zwlr_data_control`).
+
+X11 needs the XFixes and XTEST extensions, which Xorg has. Install `rofi` for `clippo menu`
+(`sudo apt install rofi`).
+
+GNOME on Wayland does not work: its compositor (Mutter) has no data-control protocol, so
+other programs cannot watch or set the clipboard. Log in with "GNOME on Xorg" instead.
+
+The history window and the emoji picker are layer-shell windows, which X11 does not have.
 
 ## Build
 
@@ -17,9 +40,9 @@ cargo build --release   # OCR is very slow in debug builds
 
 | Command | What it does |
 |---|---|
-| `clippo watch` | Records clipboard history until stopped. Runs `wl-paste --watch clippo ingest`, an OCR worker for new images, and the service socket the other commands use. |
-| `clippo ingest` | Stores clipboard data from stdin. `wl-paste --watch` calls this. |
-| `clippo menu` | Opens the history picker in fuzzel. Selecting an entry copies it, then pastes it if `paste_on_select` is on. If the picker is already open, closes it. |
+| `clippo watch` | Records clipboard history until stopped. Runs `wl-paste --watch clippo ingest` on Wayland (on X11, runs `clippo ingest` after each copy), an OCR worker for new images, and the service socket the other commands use. |
+| `clippo ingest` | Stores clipboard data from stdin. `clippo watch` runs this. |
+| `clippo menu` | Opens the history picker in fuzzel (rofi on X11). Selecting an entry copies it, then pastes it if `paste_on_select` is on. If the picker is already open, closes it. |
 | `clippo window` | Opens the history window (the fuzzel picker's replacement). Opening it again closes it. |
 | `clippo emoji` | Opens the emoji and symbol picker in the same window: emoji by category, accented letters, Greek, Cyrillic, maths and other text symbols, searchable by name (`tau`, `e acute`, `:heart:`, `U+03C4`). Picking one pastes it without recording it in history. Alt+click adds a favourite. |
 | `clippo plain [--paste \| --no-paste] [--markdown \| --no-markdown]` | Replaces the clipboard with plain text, then pastes it if `auto_paste` is on. For an image, uses the text found in it. Text that looks like Markdown has the Markdown syntax removed when `plain.strip_markdown` is on; the flags override the setting. |
@@ -52,7 +75,11 @@ Notes:
 - Entries not used for `expire_days` days are deleted, as are the oldest beyond `max_items`.
 - Running `clippo ingest` by hand stores stdin as-is. It only checks the live clipboard
   (for image types, extra formats and the password-manager hint) when run by
-  `wl-paste --watch`.
+  `clippo watch`.
+- On X11, the app you copied from keeps the clipboard data. When you copy from clippo,
+  a `clippo serve-clipboard` process holds the data until something else is copied, then exits.
+  It sets the primary selection too (the text a middle click pastes), because Shift+Insert
+  pastes the primary selection in some X11 terminals, such as cosmic-term and xterm.
 
 ## Files
 
@@ -80,12 +107,12 @@ engine = "auto"           # "ocrs", "tesseract", "auto" or "off"
 tesseract_lang = "eng"    # passed to tesseract -l
 
 [paste]
-method = "wayland"        # "wayland" (virtual keyboard protocol), "uinput", or "auto" = wayland then uinput
+method = "wayland"        # "wayland" (virtual keyboard protocol; XTEST on X11), "uinput", or "auto" = wayland then uinput
 auto_paste = true         # `clippo plain` pastes after replacing the clipboard
 paste_on_select = true    # `clippo menu` pastes the entry you pick
 keys = "shift-insert"     # "shift-insert", "ctrl-v" or "ctrl-shift-v"
 delay_ms = 100            # uinput only: wait before pasting, so the shortcut keys can be released
-release_modifiers = true  # uinput only: send Super and Alt key-ups before pasting
+release_modifiers = true  # uinput and X11: send Super and Alt key-ups before pasting
 
 [plain]
 strip_markdown = true     # `clippo plain` also removes Markdown syntax when the text looks like Markdown
@@ -103,7 +130,8 @@ format = "%Y-%m-%d %H:%M:%S"
 ```
 
 Pasting presses keys through a virtual keyboard. The Wayland method needs a compositor with
-`zwp_virtual_keyboard_v1` (COSMIC, Sway, Hyprland). The uinput method needs `/dev/uinput` to be writable by your user.
+`zwp_virtual_keyboard_v1` (COSMIC, Sway, Hyprland). On X11, the `wayland` and `auto` methods
+press the keys through the XTEST extension instead. The uinput method needs `/dev/uinput` to be writable by your user.
 On Ubuntu and Pop!_OS, the `steam-devices` package sets this up. Shift+Insert pastes in most
 apps, including terminals, which is why it's the default.
 
@@ -153,6 +181,9 @@ systemctl --user enable --now clippo.service
 The service also serves the clipboard for multi-format pastes, so restarting it while such a
 paste is on the clipboard clears the clipboard.
 
+The same service file works on COSMIC and on GNOME. clippo reads `XDG_SESSION_TYPE` from the
+systemd user environment, which the desktop sets when you log in.
+
 ## COSMIC shortcut
 
 In COSMIC Settings, open Keyboard > Keyboard shortcuts > Custom shortcuts and add:
@@ -176,6 +207,17 @@ And for the emoji picker:
 Macros can be bound the same way, for example `clippo macro 2` to paste today's date.
 
 Remove or rebind any existing `Super+V` shortcut (such as one running cliphist) first.
+
+## GNOME shortcut (X11)
+
+GNOME uses `Super+V` to show the notification list. To free it, keeping `Super+M` for the list:
+
+```sh
+gsettings set org.gnome.shell.keybindings toggle-message-tray "['<Super>m']"
+```
+
+Then open Settings > Keyboard > View and Customise Shortcuts > Custom Shortcuts, and add
+`clippo menu` on `Super+V` and `clippo plain` on `Super+Alt+V`, as in the COSMIC section.
 
 ## License
 

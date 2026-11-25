@@ -2,7 +2,7 @@ use std::io::Read;
 
 use anyhow::Result;
 
-use crate::clipboard::paste as wl_paste;
+use crate::clipboard;
 use crate::config::{Config, OcrEngineKind, Paths};
 use crate::service;
 use crate::skip;
@@ -75,7 +75,7 @@ pub fn html_has_formatting(html: &[u8]) -> bool {
 /// The extra formats to keep from what the clipboard owner offers, for a text or image primary.
 pub fn extra_formats(types: &[&str], image: bool) -> Vec<Format> {
     let fetch = |mime: &str| -> Option<Format> {
-        let content = wl_paste(&["--no-newline", "--type", mime])?;
+        let content = clipboard::read(mime)?;
         (!content.is_empty() && content.len() <= MAX_FORMAT_BYTES).then(|| Format {
             mime: mime.to_string(),
             content,
@@ -98,8 +98,8 @@ pub fn extra_formats(types: &[&str], image: bool) -> Vec<Format> {
 }
 
 pub fn run(cfg: &Config, paths: &Paths) -> Result<()> {
-    // wl-paste --watch sets CLIPBOARD_STATE; only then is it safe to query the
-    // live clipboard. A manual `clippo ingest < file` just stores stdin.
+    // wl-paste --watch (or the X11 watcher) sets CLIPBOARD_STATE; only then is it safe to
+    // query the live clipboard. A manual `clippo ingest < file` just stores stdin.
     let from_watch = match std::env::var("CLIPBOARD_STATE").ok().as_deref() {
         None => false,
         Some("data") => true,
@@ -112,11 +112,10 @@ pub fn run(cfg: &Config, paths: &Paths) -> Result<()> {
     let mut mime = sniff_image(&data).map(str::to_string);
     let mut types_str = String::new();
     if from_watch {
-        let types_raw = wl_paste(&["--list-types"]).unwrap_or_default();
-        types_str = String::from_utf8_lossy(&types_raw).into_owned();
+        types_str = clipboard::list_types().join("\n");
         let types: Vec<&str> = types_str.lines().map(str::trim).collect();
         if types.contains(&PASSWORD_HINT) {
-            let hint = wl_paste(&["--no-newline", "--type", PASSWORD_HINT]).unwrap_or_default();
+            let hint = clipboard::read(PASSWORD_HINT).unwrap_or_default();
             if String::from_utf8_lossy(&hint).trim() == "secret" {
                 return Ok(());
             }
@@ -124,11 +123,15 @@ pub fn run(cfg: &Config, paths: &Paths) -> Result<()> {
         // wl-paste --watch hands us its own pick (often text); prefer an image if offered.
         if mime.is_none()
             && let Some(t) = preferred_image_type(&types)
-            && let Some(img) = wl_paste(&["--no-newline", "--type", &t])
+            && let Some(img) = clipboard::read(&t)
             && let Some(m) = sniff_image(&img)
         {
             data = img;
             mime = Some(m.to_string());
+        }
+        // The X11 watcher sends nothing on stdin, so read the text here.
+        if mime.is_none() && data.is_empty() {
+            data = clipboard::read_text().unwrap_or_default();
         }
     }
     let types: Vec<&str> = types_str.lines().map(str::trim).collect();

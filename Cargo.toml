@@ -2,7 +2,7 @@
 name = "clippo"
 version = "0.1.0"
 edition = "2024"
-description = "Clipboard history for Wayland, with OCR for images"
+description = "Clipboard history for Wayland and X11, with OCR for images"
 license = "MIT"
 repository = "https://github.com/pengowray/clippo"
 
@@ -32,6 +32,7 @@ unicode_names2 = "1"
 zbus = { version = "5.15", default-features = false, features = ["tokio"] }
 tokio = { version = "1.52", features = ["rt", "sync", "time"] }
 wl-clipboard-rs = "0.9.3"
+x11rb = { version = "0.13.2", features = ["xfixes", "xtest"] }
 libcosmic = { git = "https://github.com/pop-os/libcosmic", default-features = false, features = [
     "autosize",
     "dbus-config",

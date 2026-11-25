@@ -1,7 +1,7 @@
 use std::io::Write;
 use std::process::{Command, Stdio};
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 
 use crate::clipboard::{self, CopyMode};
 use crate::config::{Config, Paths};
@@ -12,6 +12,16 @@ use crate::thumbs;
 const TEXT_LABEL_CHARS: usize = 80;
 const OCR_LABEL_CHARS: usize = 200;
 const PROMPT: &str = "Clipboard: ";
+
+/// The dmenu-style picker: fuzzel on Wayland, rofi on X11 (fuzzel is Wayland-only). Both read
+/// `label\0icon\x1fpath` rows.
+fn picker() -> (&'static str, &'static [&'static str]) {
+    if crate::session::is_x11() {
+        ("rofi", &["-dmenu", "-i", "-show-icons", "-p", "Clipboard"])
+    } else {
+        ("fuzzel", &["--dmenu", "--prompt", PROMPT])
+    }
+}
 
 /// Collapse runs of whitespace (and control chars) to single spaces, then
 /// truncate to `max` chars with an ellipsis.
@@ -66,18 +76,19 @@ pub fn parse_selection(line: &str) -> Option<i64> {
     id.trim().parse().ok()
 }
 
-fn fuzzel_running() -> bool {
+fn picker_running(name: &str) -> bool {
     Command::new("pgrep")
-        .args(["-x", "fuzzel"])
+        .args(["-x", name])
         .stdout(Stdio::null())
         .status()
         .is_ok_and(|s| s.success())
 }
 
 pub fn run(cfg: &Config, store: &Store, paths: &Paths) -> Result<()> {
+    let (picker, args) = picker();
     // Pressing the shortcut again closes an open picker.
-    if fuzzel_running() {
-        let _ = Command::new("pkill").args(["-x", "fuzzel"]).status();
+    if picker_running(picker) {
+        let _ = Command::new("pkill").args(["-x", picker]).status();
         return Ok(());
     }
 
@@ -100,12 +111,17 @@ pub fn run(cfg: &Config, store: &Store, paths: &Paths) -> Result<()> {
         input.push('\n');
     }
 
-    let mut child = Command::new("fuzzel")
-        .args(["--dmenu", "--prompt", PROMPT])
+    let mut child = match Command::new(picker)
+        .args(args)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .spawn()
-        .context("could not run fuzzel")?;
+    {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            bail!("`clippo menu` needs {picker}: install it with `sudo apt install {picker}`")
+        }
+        r => r.with_context(|| format!("could not run {picker}"))?,
+    };
     // Dropping stdin at the end of this statement closes it so fuzzel shows the list.
     child
         .stdin

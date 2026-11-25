@@ -1060,7 +1060,7 @@ fn wait_for_ocr(db: &std::path::Path, id: i64) -> bool {
     }
 }
 
-/// Does the live clipboard hold entry `id`? Two `wl-paste` spawns, so never on the UI
+/// Does the live clipboard hold entry `id`? Two clipboard reads, so never on the UI
 /// thread (design 8.1).
 fn clipboard_holds(db: &std::path::Path, id: i64, mime: &str) -> bool {
     let Ok(store) = Store::open(db) else {
@@ -1070,12 +1070,9 @@ fn clipboard_holds(db: &std::path::Path, id: i64, mime: &str) -> bool {
     let types: Vec<&str> = types.iter().map(String::as_str).collect();
     let data = if mime.starts_with("image/") {
         crate::ingest::preferred_image_type(&types)
-            .and_then(|t| clipboard::paste(&["--no-newline", "--type", &t]))
-    } else if types
-        .iter()
-        .any(|t| t.starts_with("text/plain") || *t == "UTF8_STRING")
-    {
-        clipboard::paste(&["--type", "text"])
+            .and_then(|t| clipboard::read(&t))
+    } else if types.iter().any(|t| clipboard::is_text_type(t)) {
+        clipboard::read_text()
     } else {
         None
     };

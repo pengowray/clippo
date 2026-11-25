@@ -10,12 +10,14 @@ mod paste;
 mod plain;
 mod save;
 mod service;
+mod session;
 mod skip;
 mod store;
 mod thumbs;
 mod ui;
 mod vkbd;
 mod watch;
+mod x11;
 
 use std::io::{Read, Write};
 use std::path::PathBuf;
@@ -32,7 +34,7 @@ use store::{OcrStatus, Store};
 #[command(
     name = "clippo",
     version,
-    about = "Clipboard history for Wayland, with OCR for images"
+    about = "Clipboard history for Wayland and X11, with OCR for images"
 )]
 struct Cli {
     #[command(subcommand)]
@@ -43,8 +45,11 @@ struct Cli {
 enum Cmd {
     /// Watch the clipboard and record history (runs until stopped)
     Watch,
-    /// Store clipboard data from stdin (called by `wl-paste --watch`)
+    /// Store clipboard data from stdin (called by `wl-paste --watch`, or by `watch` on X11)
     Ingest,
+    /// X11: own the clipboard with the formats on stdin until another app copies (run by clippo)
+    #[command(hide = true)]
+    ServeClipboard,
     /// Open the history picker; selecting an entry copies it, and pastes it if `paste.paste_on_select` is on
     Menu,
     /// Open the clipboard history window (replaces `menu` once finished)
@@ -155,6 +160,7 @@ fn run(cli: Cli) -> Result<()> {
     match cli.command {
         Cmd::Watch => watch::run(&cfg, &paths),
         Cmd::Ingest => ingest::run(&cfg, &paths),
+        Cmd::ServeClipboard => x11::serve_from_stdin(),
         Cmd::Menu => menu::run(&cfg, &Store::open(&paths.db)?, &paths),
         Cmd::Window => ui::run(&cfg, &paths, ui::WindowPage::List),
         Cmd::Emoji => ui::run(&cfg, &paths, ui::WindowPage::Emoji),

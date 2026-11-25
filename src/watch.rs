@@ -19,6 +19,10 @@ pub fn run(cfg: &Config, paths: &Paths) -> Result<()> {
     Store::open(&paths.db)?;
 
     let exe = std::env::current_exe().context("could not find clippo executable")?;
+    eprintln!("clippo: session: {:?}", crate::session::current());
+    if crate::session::is_x11() {
+        return run_x11(cfg, paths, exe);
+    }
     let mut cmd = Command::new("wl-paste");
     cmd.arg("--watch").arg(&exe).arg("ingest");
     // SAFETY: prctl is async-signal-safe. It makes wl-paste exit when we do,
@@ -36,22 +40,14 @@ pub fn run(cfg: &Config, paths: &Paths) -> Result<()> {
     let window = std::env::var_os("WAYLAND_DISPLAY")
         .is_some()
         .then(crate::ui::toggle_channel);
-    let shared = Arc::new(Shared {
-        cfg: RwLock::new(cfg.clone()),
-        paths: paths.clone(),
-        menu_toggle: window.as_ref().map(|(tx, _)| {
+    start_service(
+        cfg,
+        paths,
+        window.as_ref().map(|(tx, _)| {
             let tx = tx.clone();
             Box::new(move |page| tx.toggle(page)) as Box<dyn Fn(crate::ui::WindowPage) + Send + Sync>
         }),
-    });
-    let (wake_ocr, wakeups) = std::sync::mpsc::channel();
-    let worker_shared = Arc::clone(&shared);
-    thread::spawn(move || ocr_worker(&worker_shared, &wakeups));
-    thread::spawn(move || {
-        if let Err(e) = service::serve(shared, wake_ocr) {
-            eprintln!("clippo: {e:#}");
-        }
-    });
+    );
 
     let Some((_, toggles)) = window else {
         let status = child.wait()?;
@@ -75,6 +71,46 @@ pub fn run(cfg: &Config, paths: &Paths) -> Result<()> {
     loop {
         thread::park();
     }
+}
+
+/// X11: XFixes reports each copy and `clippo ingest` stores it, one at a time. There is no
+/// history window on X11 (it is a Wayland layer-shell surface), so this runs on the main thread.
+fn run_x11(cfg: &Config, paths: &Paths, exe: std::path::PathBuf) -> Result<()> {
+    start_service(cfg, paths, None);
+    let Err(e) = crate::x11::watch(|| {
+        let status = Command::new(&exe)
+            .arg("ingest")
+            .env("CLIPBOARD_STATE", "data")
+            .stdin(std::process::Stdio::null())
+            .status();
+        match status {
+            Ok(s) if s.success() => {}
+            Ok(s) => eprintln!("clippo: ingest failed ({s})"),
+            Err(e) => eprintln!("clippo: could not run ingest: {e}"),
+        }
+    });
+    bail!("clipboard watching stopped: {e:#}");
+}
+
+/// Start the OCR worker and the service socket, each on its own thread.
+fn start_service(
+    cfg: &Config,
+    paths: &Paths,
+    menu_toggle: Option<Box<dyn Fn(crate::ui::WindowPage) + Send + Sync>>,
+) {
+    let shared = Arc::new(Shared {
+        cfg: RwLock::new(cfg.clone()),
+        paths: paths.clone(),
+        menu_toggle,
+    });
+    let (wake_ocr, wakeups) = std::sync::mpsc::channel();
+    let worker_shared = Arc::clone(&shared);
+    thread::spawn(move || ocr_worker(&worker_shared, &wakeups));
+    thread::spawn(move || {
+        if let Err(e) = service::serve(shared, wake_ocr) {
+            eprintln!("clippo: {e:#}");
+        }
+    });
 }
 
 /// The OCR engine, plus the settings it was built from so a `reload` can replace it.

@@ -1,4 +1,5 @@
-//! The live clipboard: reading it with `wl-paste`, and putting entries on it.
+//! The live clipboard: reading it, and putting entries on it. On X11 this all goes through
+//! `x11.rs`; the rest of this note is about Wayland.
 //!
 //! Single-type copies go through `wl-copy`, which forks a process that serves the clipboard
 //! until someone else copies. A copy that offers several types (the primary plus stored HTML
@@ -20,13 +21,15 @@ use crate::config::Paths;
 use crate::ingest::TEXT_MIME;
 use crate::markdown;
 use crate::service;
+use crate::session;
 use crate::store::{Format, OcrStatus, Store};
+use crate::x11;
 
 /// How long to wait for the compositor to report our multi-type source as the owner.
 const OWNERSHIP_WAIT: Duration = Duration::from_millis(500);
 
 /// Run `wl-paste` with `args`; `None` if it fails (e.g. empty clipboard or type not offered).
-pub fn paste(args: &[&str]) -> Option<Vec<u8>> {
+fn wl_paste(args: &[&str]) -> Option<Vec<u8>> {
     let out = Command::new("wl-paste")
         .args(args)
         .stdin(Stdio::null())
@@ -36,9 +39,33 @@ pub fn paste(args: &[&str]) -> Option<Vec<u8>> {
     out.status.success().then_some(out.stdout)
 }
 
+/// The clipboard's data as `mime`, exactly as offered; `None` if it isn't offered.
+pub fn read(mime: &str) -> Option<Vec<u8>> {
+    if session::is_x11() {
+        return x11::read(mime);
+    }
+    wl_paste(&["--no-newline", "--type", mime])
+}
+
+/// The clipboard's text, from whichever text type is offered.
+pub fn read_text() -> Option<Vec<u8>> {
+    if session::is_x11() {
+        return x11::read_text();
+    }
+    wl_paste(&["--no-newline", "--type", "text"])
+}
+
+/// Does this offered type hold plain text?
+pub fn is_text_type(t: &str) -> bool {
+    t.starts_with("text/plain") || t == "UTF8_STRING" || t == "STRING"
+}
+
 /// Types offered by the current clipboard owner.
 pub fn list_types() -> Vec<String> {
-    let raw = paste(&["--list-types"]).unwrap_or_default();
+    if session::is_x11() {
+        return x11::list_types();
+    }
+    let raw = wl_paste(&["--list-types"]).unwrap_or_default();
     String::from_utf8_lossy(&raw)
         .lines()
         .map(|l| l.trim().to_string())
@@ -46,8 +73,14 @@ pub fn list_types() -> Vec<String> {
         .collect()
 }
 
-/// Put `data` on the clipboard. With no `mime`, wl-copy offers the usual set of text types.
+/// Put `data` on the clipboard. With no `mime`, the usual set of text types is offered.
 pub fn copy(mime: Option<&str>, data: &[u8]) -> Result<()> {
+    if session::is_x11() {
+        return x11::copy(&[Format {
+            mime: mime.unwrap_or(TEXT_MIME).to_string(),
+            content: data.to_vec(),
+        }]);
+    }
     let mut cmd = Command::new("wl-copy");
     if let Some(mime) = mime {
         cmd.args(["--type", mime]);
@@ -68,6 +101,9 @@ pub fn copy(mime: Option<&str>, data: &[u8]) -> Result<()> {
 /// client takes the clipboard. The first format is the primary. Returns once the compositor
 /// reports the new offer, so a paste keystroke sent afterwards gets this content.
 pub fn copy_formats(formats: &[Format]) -> Result<()> {
+    if session::is_x11() {
+        return x11::copy(formats);
+    }
     let primary = formats.first().ok_or_else(|| anyhow!("nothing to copy"))?;
     let sources = formats
         .iter()
@@ -171,12 +207,12 @@ pub fn entry_formats(store: &Store, id: i64, mode: CopyMode) -> Result<Vec<Forma
 }
 
 /// Put an entry on the clipboard. The running service serves every stored format; without it,
-/// `wl-copy` serves the primary type only (formatting is lost for that paste).
+/// only the primary type is offered (formatting is lost for that paste).
 pub fn copy_entry(paths: &Paths, store: &Store, id: i64, mode: CopyMode) -> Result<()> {
     match service::copy_entry(paths, id, mode) {
         Ok(()) => return Ok(()),
         Err(e) if e.is::<service::Unavailable>() => {
-            crate::log(&format!("copy: {e:#}, using wl-copy"));
+            crate::log(&format!("copy: {e:#}, offering the main format only"));
         }
         Err(e) => return Err(e),
     }

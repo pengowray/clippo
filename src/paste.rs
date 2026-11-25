@@ -1,6 +1,7 @@
 //! Auto-paste: press the paste keys through a virtual keyboard.
 //!
-//! The Wayland virtual keyboard (`vkbd.rs`) is the default. The uinput fallback takes the
+//! The Wayland virtual keyboard (`vkbd.rs`) is the default; on X11 its place is taken by
+//! XTEST (`x11.rs`), for both the `wayland` and `auto` methods. The uinput fallback takes the
 //! compositor a noticeable moment to start listening to a new device, so `clippo watch` keeps
 //! one open and serves paste requests over its socket (`service.rs`). Without the service, a
 //! keyboard is created on the spot and clippo waits for it to settle.
@@ -117,12 +118,15 @@ pub fn send(paths: &Paths, cfg: &PasteConfig, after_menu: bool) -> Result<()> {
         if after_menu {
             sleep(AFTER_MENU_WAIT);
         }
-        match crate::vkbd::paste(cfg.keys) {
+        let (result, name) = if crate::session::is_x11() {
+            (crate::x11::paste(cfg.keys, cfg.release_modifiers), "XTEST")
+        } else {
+            (crate::vkbd::paste(cfg.keys), "Wayland virtual keyboard")
+        };
+        match result {
             Ok(()) => return Ok(()),
             Err(e) if cfg.method == PasteMethod::Wayland => return Err(e),
-            Err(e) => crate::log(&format!(
-                "paste: Wayland virtual keyboard failed ({e:#}), trying uinput"
-            )),
+            Err(e) => crate::log(&format!("paste: {name} failed ({e:#}), trying uinput")),
         }
     }
     send_uinput(paths, cfg)

@@ -16,11 +16,8 @@ pub fn run(cfg: &Config, paths: &Paths, auto_paste: bool, strip_markdown: Option
     let types = clipboard::list_types();
     let types: Vec<&str> = types.iter().map(String::as_str).collect();
 
-    let text = if types
-        .iter()
-        .any(|t| t.starts_with("text/plain") || *t == "UTF8_STRING")
-    {
-        let data = clipboard::paste(&["--no-newline", "--type", "text"]).unwrap_or_default();
+    let text = if types.iter().any(|t| clipboard::is_text_type(t)) {
+        let data = clipboard::read_text().unwrap_or_default();
         let text = String::from_utf8_lossy(&data).into_owned();
         if strip_markdown.unwrap_or(cfg.plain.strip_markdown) && markdown::looks_like(&text) {
             markdown::strip(&text)
@@ -28,7 +25,7 @@ pub fn run(cfg: &Config, paths: &Paths, auto_paste: bool, strip_markdown: Option
             text
         }
     } else if let Some(t) = preferred_image_type(&types)
-        && let Some(img) = clipboard::paste(&["--type", &t])
+        && let Some(img) = clipboard::read(&t)
     {
         image_text(cfg, paths, &img)?
     } else {
