@@ -8,7 +8,8 @@ in the picker, and the text found in them is searchable.
 
 clippo uses the session type in `XDG_SESSION_TYPE` (`wayland` or `x11`). If it is not set,
 clippo uses Wayland when `WAYLAND_DISPLAY` is set, and X11 when only `DISPLAY` is set.
-`clippo watch` prints the session type it uses when it starts.
+`clippo watch` prints the session type it uses when it starts. To choose one yourself, set
+`CLIPPO_SESSION` to `wayland` or `x11`.
 
 | | Wayland (COSMIC) | X11 (GNOME on Xorg) | GNOME on Wayland |
 |---|---|---|---|
@@ -16,8 +17,8 @@ clippo uses Wayland when `WAYLAND_DISPLAY` is set, and X11 when only `DISPLAY` i
 | `clippo copy`, `plain`, `macro` | yes | yes | no |
 | Pasting | virtual keyboard or uinput | XTEST or uinput | no |
 | Picker (`clippo menu`) | fuzzel | rofi | no |
-| History window (`clippo window`) | yes | no | no |
-| Emoji picker (`clippo emoji`) | yes | no | no |
+| History window (`clippo window`) | yes | yes | no |
+| Emoji picker (`clippo emoji`) | yes | yes | no |
 
 Wayland needs `wl-clipboard` (`wl-paste`, `wl-copy`) and `fuzzel`, and a compositor with a
 data-control protocol (`ext_data_control_v1` or `zwlr_data_control`).
@@ -28,7 +29,9 @@ X11 needs the XFixes and XTEST extensions, which Xorg has. Install `rofi` for `c
 GNOME on Wayland does not work: its compositor (Mutter) has no data-control protocol, so
 other programs cannot watch or set the clipboard. Log in with "GNOME on Xorg" instead.
 
-The history window and the emoji picker use the Wayland layer-shell protocol, which X11 does not have.
+On Wayland, the history window and the emoji picker use the layer-shell protocol. On X11
+they open as an ordinary window without a title bar, centred on the monitor under the mouse
+pointer.
 
 ## Build
 

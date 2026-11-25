@@ -9,8 +9,8 @@ pub enum Session {
     X11,
 }
 
-/// `XDG_SESSION_TYPE` decides; without it, a Wayland socket, then an X display. Wayland is
-/// the fallback, as it was before X11 support.
+/// `CLIPPO_SESSION` (an override), then `XDG_SESSION_TYPE` decide; without either, a Wayland
+/// socket, then an X display. Wayland is the fallback, as it was before X11 support.
 fn detect(session_type: Option<&str>, wayland_display: bool, x_display: bool) -> Session {
     match session_type {
         Some("x11") => Session::X11,
@@ -25,8 +25,11 @@ pub fn current() -> Session {
     static SESSION: OnceLock<Session> = OnceLock::new();
     *SESSION.get_or_init(|| {
         let set = |var| std::env::var_os(var).is_some_and(|v| !v.is_empty());
+        let session_type = std::env::var("CLIPPO_SESSION")
+            .or_else(|_| std::env::var("XDG_SESSION_TYPE"))
+            .ok();
         detect(
-            std::env::var("XDG_SESSION_TYPE").ok().as_deref(),
+            session_type.as_deref(),
             set("WAYLAND_DISPLAY"),
             set("DISPLAY"),
         )

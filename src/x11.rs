@@ -19,7 +19,7 @@ use x11rb::connection::{Connection, RequestConnection};
 use x11rb::protocol::Event;
 use x11rb::protocol::xfixes::{self, ConnectionExt as _};
 use x11rb::protocol::xproto::{
-    Atom, AtomEnum, ChangeWindowAttributesAux, ConnectionExt as _, CreateWindowAux, EventMask,
+    Atom, AtomEnum, ChangeWindowAttributesAux, ClientMessageEvent, ConnectionExt as _, CreateWindowAux, EventMask,
     KEY_PRESS_EVENT, KEY_RELEASE_EVENT, Keycode, PropMode, Property, SELECTION_NOTIFY_EVENT,
     SelectionNotifyEvent, SelectionRequestEvent, Window, WindowClass,
 };
@@ -109,6 +109,26 @@ impl Client {
             };
             // SAFETY: one valid pollfd for the duration of the call.
             unsafe { libc::poll(&mut fd, 1, left.as_millis().min(i32::MAX as u128) as i32) };
+        }
+    }
+
+    /// The X server's current time. ICCCM and EWMH ask for a real timestamp rather than
+    /// CurrentTime: make a property change and read the time from its notify.
+    fn server_time(&self) -> Result<u32> {
+        self.conn.change_property8(
+            PropMode::APPEND,
+            self.win,
+            self.atoms.CLIPPO_DATA,
+            AtomEnum::STRING,
+            &[],
+        )?;
+        let deadline = Instant::now() + READ_TIMEOUT;
+        loop {
+            match self.next_event(deadline)? {
+                None => bail!("the X server did not answer"),
+                Some(Event::PropertyNotify(e)) if e.window == self.win => return Ok(e.time),
+                Some(_) => {}
+            }
         }
     }
 
@@ -432,23 +452,7 @@ impl Server {
                 targets.push((atom, i, false));
             }
         }
-        // ICCCM asks for a real timestamp rather than CurrentTime: make a property change and
-        // use the time on its notify.
-        client.conn.change_property8(
-            PropMode::APPEND,
-            client.win,
-            client.atoms.CLIPPO_DATA,
-            AtomEnum::STRING,
-            &[],
-        )?;
-        let deadline = Instant::now() + READ_TIMEOUT;
-        let time = loop {
-            match client.next_event(deadline)? {
-                None => bail!("the X server did not answer"),
-                Some(Event::PropertyNotify(e)) if e.window == client.win => break e.time,
-                Some(_) => {}
-            }
-        };
+        let time = client.server_time()?;
         let primary: Atom = AtomEnum::PRIMARY.into();
         for sel in [client.atoms.CLIPBOARD, primary] {
             client.conn.set_selection_owner(client.win, sel, time)?;
@@ -680,6 +684,42 @@ pub fn paste(keys: PasteKeys, release_modifiers: bool) -> Result<()> {
     // A round trip makes sure the server has processed the keys before we disconnect.
     conn.get_input_focus()?.reply()?;
     Ok(())
+}
+
+/// Ask the window manager to raise and focus `window`. A request from an app with no recent
+/// input would be refused by focus-stealing prevention, so this asks as a pager (source 2)
+/// with the current server time.
+pub fn activate(window: Window) -> Result<()> {
+    let c = Client::connect()?;
+    let time = c.server_time()?;
+    let active = c.atom("_NET_ACTIVE_WINDOW")?;
+    let event = ClientMessageEvent::new(32, window, active, [2, time, 0, 0, 0]);
+    c.conn.send_event(
+        false,
+        c.root,
+        EventMask::SUBSTRUCTURE_NOTIFY | EventMask::SUBSTRUCTURE_REDIRECT,
+        event,
+    )?;
+    c.conn.flush()?;
+    Ok(())
+}
+
+/// The monitor under the mouse pointer, as (x, y, width, height) in pixels.
+pub fn pointer_monitor() -> Option<(i16, i16, u16, u16)> {
+    use x11rb::protocol::randr::ConnectionExt as _;
+    let (conn, screen) = x11rb::connect(None).ok()?;
+    let root = conn.setup().roots[screen].root;
+    let pointer = conn.query_pointer(root).ok()?.reply().ok()?;
+    let (px, py) = (i32::from(pointer.root_x), i32::from(pointer.root_y));
+    let monitors = conn.randr_get_monitors(root, true).ok()?.reply().ok()?.monitors;
+    monitors
+        .iter()
+        .find(|m| {
+            let (x, y) = (i32::from(m.x), i32::from(m.y));
+            (x..x + i32::from(m.width)).contains(&px) && (y..y + i32::from(m.height)).contains(&py)
+        })
+        .or_else(|| monitors.iter().find(|m| m.primary))
+        .map(|m| (m.x, m.y, m.width, m.height))
 }
 
 #[cfg(test)]

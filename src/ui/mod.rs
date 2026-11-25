@@ -1,4 +1,5 @@
-//! The Super+V clipboard history window and the emoji picker (libcosmic, layer-shell).
+//! The Super+V clipboard history window and the emoji picker (libcosmic: a layer-shell
+//! surface on Wayland, an ordinary window on X11).
 
 pub mod app;
 pub mod emoji;
@@ -96,17 +97,6 @@ fn settings() -> cosmic::app::Settings {
 /// Toggle the window on `page`: through the running service when it hosts one, else in
 /// this process. Without the service, a second window of either page closes the first.
 pub fn run(cfg: &Config, paths: &Paths, page: WindowPage) -> Result<()> {
-    if crate::session::is_x11() {
-        // The window is a layer-shell surface, which X11 has no equivalent for.
-        match page {
-            WindowPage::List => anyhow::bail!(
-                "the history window needs a Wayland desktop such as COSMIC; on X11, use `clippo menu`"
-            ),
-            WindowPage::Emoji => {
-                anyhow::bail!("the emoji picker needs a Wayland desktop such as COSMIC")
-            }
-        }
-    }
     match crate::service::menu_toggle(paths, page) {
         Ok(()) => return Ok(()),
         // Not running, or an older service without a window: open one here instead.

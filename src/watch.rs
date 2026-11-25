@@ -19,25 +19,25 @@ pub fn run(cfg: &Config, paths: &Paths) -> Result<()> {
     Store::open(&paths.db)?;
 
     let exe = std::env::current_exe().context("could not find clippo executable")?;
+    let x11 = crate::session::is_x11();
     eprintln!("clippo: session: {:?}", crate::session::current());
-    if crate::session::is_x11() {
-        return run_x11(cfg, paths, exe);
-    }
-    let mut cmd = Command::new("wl-paste");
-    cmd.arg("--watch").arg(&exe).arg("ingest");
-    // SAFETY: prctl is async-signal-safe. It makes wl-paste exit when we do,
-    // however we die.
-    unsafe {
-        cmd.pre_exec(|| {
-            libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM);
-            Ok(())
-        });
-    }
-    let mut child = cmd.spawn().context("could not run wl-paste")?;
+    // Blocks until clipboard watching stops, and says why.
+    let watcher: Box<dyn FnOnce() -> String + Send> = if x11 {
+        Box::new(move || match watch_x11(&exe) {
+            Err(e) => format!("clipboard watching stopped: {e:#}"),
+        })
+    } else {
+        let mut child = spawn_wl_paste(&exe)?;
+        Box::new(move || match child.wait() {
+            Ok(s) => format!("clipboard watching stopped: wl-paste exited ({s})"),
+            Err(e) => format!("clipboard watching stopped: {e}"),
+        })
+    };
 
     // The history window lives in this process (design 1). Its toolkit needs the main
-    // thread, so wl-paste is then watched from another one.
-    let window = std::env::var_os("WAYLAND_DISPLAY")
+    // thread, so the clipboard is then watched from another one.
+    let display = if x11 { "DISPLAY" } else { "WAYLAND_DISPLAY" };
+    let window = std::env::var_os(display)
         .is_some()
         .then(crate::ui::toggle_channel);
     start_service(
@@ -50,20 +50,16 @@ pub fn run(cfg: &Config, paths: &Paths) -> Result<()> {
     );
 
     let Some((_, toggles)) = window else {
-        let status = child.wait()?;
-        bail!("clipboard watching stopped: wl-paste exited ({status})");
+        bail!("{}", watcher());
     };
     thread::spawn(move || {
-        let msg = match child.wait() {
-            Ok(s) => format!("clipboard watching stopped: wl-paste exited ({s})"),
-            Err(e) => format!("clipboard watching stopped: {e}"),
-        };
+        let msg = watcher();
         eprintln!("clippo: {msg}");
         crate::log(&msg);
         std::process::exit(1);
     });
-    // The window is optional: if its toolkit stops, keep recording and only exit with
-    // wl-paste (the thread above).
+    // The window is optional: if its toolkit stops, keep recording and only exit when
+    // clipboard watching stops (the thread above).
     if let Err(e) = crate::ui::run_resident(cfg, paths, toggles) {
         eprintln!("clippo: history window stopped: {e:#}");
         crate::log(&format!("history window stopped: {e:#}"));
@@ -73,12 +69,26 @@ pub fn run(cfg: &Config, paths: &Paths) -> Result<()> {
     }
 }
 
-/// X11: XFixes reports each copy and `clippo ingest` stores it, one at a time. There is no
-/// history window on X11 (it is a Wayland layer-shell surface), so this runs on the main thread.
-fn run_x11(cfg: &Config, paths: &Paths, exe: std::path::PathBuf) -> Result<()> {
-    start_service(cfg, paths, None);
-    let Err(e) = crate::x11::watch(|| {
-        let status = Command::new(&exe)
+/// Wayland: `wl-paste --watch clippo ingest`, which runs ingest for each copy.
+fn spawn_wl_paste(exe: &std::path::Path) -> Result<std::process::Child> {
+    let mut cmd = Command::new("wl-paste");
+    cmd.arg("--watch").arg(exe).arg("ingest");
+    // SAFETY: prctl is async-signal-safe. It makes wl-paste exit when we do,
+    // however we die.
+    unsafe {
+        cmd.pre_exec(|| {
+            libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM);
+            Ok(())
+        });
+    }
+    cmd.spawn().context("could not run wl-paste")
+}
+
+/// X11: XFixes reports each copy and `clippo ingest` stores it, one at a time. Returns only
+/// on error.
+fn watch_x11(exe: &std::path::Path) -> Result<std::convert::Infallible> {
+    crate::x11::watch(|| {
+        let status = Command::new(exe)
             .arg("ingest")
             .env("CLIPBOARD_STATE", "data")
             .stdin(std::process::Stdio::null())
@@ -88,8 +98,7 @@ fn run_x11(cfg: &Config, paths: &Paths, exe: std::path::PathBuf) -> Result<()> {
             Ok(s) => eprintln!("clippo: ingest failed ({s})"),
             Err(e) => eprintln!("clippo: could not run ingest: {e}"),
         }
-    });
-    bail!("clipboard watching stopped: {e:#}");
+    })
 }
 
 /// Start the OCR worker and the service socket, each on its own thread.

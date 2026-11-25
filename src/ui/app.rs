@@ -1,4 +1,4 @@
-//! The Super+V window: a layer-shell overlay hosting the history list, macro column,
+//! The Super+V window: a layer-shell overlay (an ordinary undecorated window on X11) hosting the history list, macro column,
 //! settings page and the emoji picker (`clippo emoji`). See docs/menu-design.md.
 
 use std::collections::HashMap;
@@ -164,7 +164,10 @@ pub enum JobError {
 #[derive(Debug, Clone)]
 pub enum Message {
     Key(Key, Modifiers, Status),
-    Layer(LayerEvent, window::Id),
+    /// The window gained (`true`) or lost keyboard focus.
+    Focus(window::Id, bool),
+    /// X11: the window manager asked to close the window (Alt+F4).
+    CloseRequested(window::Id),
     Query(String),
     ClearSearch,
     Hover(Option<usize>),
@@ -235,6 +238,9 @@ pub struct App {
     toggles: Option<ToggleSource>,
     mapped: bool,
     shown_at: Instant,
+    /// The window has had keyboard focus since it was shown. On X11 a focus-out can arrive
+    /// before the first focus-in, and must not close the window.
+    had_focus: bool,
     /// Set by `show`; the first frame after it logs how long opening took.
     redraw_probe: Option<Instant>,
     /// How long the first `view` after a show took to build (`view` takes `&self`).
@@ -489,6 +495,7 @@ impl App {
         }
         self.mapped = true;
         self.shown_at = Instant::now();
+        self.had_focus = false;
         self.closing = false;
         self.query.clear();
         self.selected = 0;
@@ -511,6 +518,9 @@ impl App {
         }
         // Map first with the list from the last open; `Refresh` replaces it a moment later.
         let load = cosmic::task::message(cosmic::Action::App(Message::Refresh));
+        if crate::session::is_x11() {
+            return Task::batch([self.open_x11_window(), load]);
+        }
         let surface = self.surface;
         let show = cosmic::surface::surface_task(simple_layer_shell::<Message>(
             LiveSettings::default,
@@ -535,14 +545,63 @@ impl App {
         Task::batch([show, load])
     }
 
+    /// X11 has no layer shell: open an undecorated, always-on-top window centred on the
+    /// monitor under the pointer. Each open makes a new window, with a new id.
+    fn open_x11_window(&mut self) -> Task<Message> {
+        let size = iced::Size::new(WIDTH as f32, HEIGHT as f32);
+        let position = match crate::x11::pointer_monitor() {
+            Some((x, y, w, h)) => window::Position::Specific(iced::Point::new(
+                x as f32 + (w as f32 - size.width) / 2.0,
+                y as f32 + (h as f32 - size.height) / 2.0,
+            )),
+            None => window::Position::Centered,
+        };
+        let (id, open) = window::open(window::Settings {
+            size,
+            position,
+            resizable: false,
+            decorations: false,
+            level: window::Level::AlwaysOnTop,
+            exit_on_close_request: false,
+            platform_specific: window::settings::PlatformSpecific {
+                application_id: "clippo".into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+        self.surface = id;
+        open.then(|id| window::raw_id::<Message>(id))
+            .then(|xid| {
+                iced::Task::future(async move {
+                    let activated = tokio::task::spawn_blocking(move || {
+                        crate::x11::activate(xid as u32)
+                    })
+                    .await;
+                    if let Ok(Err(e)) = activated {
+                        crate::log(&format!("window: could not focus it: {e:#}"));
+                    }
+                })
+            })
+            .discard()
+    }
+
+    /// Take the window or surface off the screen.
+    fn unmap(&self) -> Task<Message> {
+        if crate::session::is_x11() {
+            window::close(self.surface)
+        } else {
+            destroy_layer_surface(self.surface)
+        }
+    }
+
     /// Unmap the overlay; in resident mode the process stays, otherwise it exits.
     fn close(&mut self) -> Task<Message> {
         self.closing = true;
         self.mapped = false;
         if self.resident() {
-            destroy_layer_surface(self.surface)
+            self.unmap()
         } else {
-            Task::batch([destroy_layer_surface(self.surface), iced::exit()])
+            Task::batch([self.unmap(), iced::exit()])
         }
     }
 
@@ -558,7 +617,7 @@ impl App {
                 .unwrap_or_else(|e| Err(JobError::Paste(e.to_string())))
         })
         .map(|r| cosmic::Action::App(Message::Done(r)));
-        Task::batch([destroy_layer_surface(self.surface), run])
+        Task::batch([self.unmap(), run])
     }
 
     fn act(&mut self, idx: usize, action: RowAction) -> Task<Message> {
@@ -654,7 +713,7 @@ impl App {
                 );
                 let run = iced::Task::future(dialog)
                     .map(|r| cosmic::Action::App(Message::SavedAs(r)));
-                Task::batch([destroy_layer_surface(self.surface), run])
+                Task::batch([self.unmap(), run])
             }
             RowAction::QuickSave => {
                 if !row.is_image() {
@@ -1100,8 +1159,13 @@ fn service_status(cfg: &Config, paths: &Paths) -> (bool, bool) {
     }
 }
 
-fn map_event(e: iced::Event, status: Status, _id: window::Id) -> Option<Message> {
+fn map_event(e: iced::Event, status: Status, id: window::Id) -> Option<Message> {
     match e {
+        iced::Event::Window(iced::window::Event::Focused) => Some(Message::Focus(id, true)),
+        iced::Event::Window(iced::window::Event::Unfocused) => Some(Message::Focus(id, false)),
+        iced::Event::Window(iced::window::Event::CloseRequested) => {
+            Some(Message::CloseRequested(id))
+        }
         iced::Event::Window(iced::window::Event::RedrawRequested(_)) => Some(Message::Redraw),
         iced::Event::Keyboard(iced::keyboard::Event::KeyPressed { key, modifiers, .. }) => {
             Some(Message::Key(key, modifiers, status))
@@ -1110,10 +1174,15 @@ fn map_event(e: iced::Event, status: Status, _id: window::Id) -> Option<Message>
             Some(Message::Modifiers(m))
         }
         iced::Event::PlatformSpecific(PlatformSpecific::Wayland(wayland::Event::Layer(
-            e,
+            LayerEvent::Focused,
             _,
             id,
-        ))) => Some(Message::Layer(e, id)),
+        ))) => Some(Message::Focus(id, true)),
+        iced::Event::PlatformSpecific(PlatformSpecific::Wayland(wayland::Event::Layer(
+            LayerEvent::Unfocused,
+            _,
+            id,
+        ))) => Some(Message::Focus(id, false)),
         _ => None,
     }
 }
@@ -1176,6 +1245,7 @@ impl cosmic::Application for App {
                 .map(|rx| ToggleSource(Arc::new(Mutex::new(Some(rx))))),
             mapped: false,
             shown_at: Instant::now(),
+            had_focus: false,
             redraw_probe: None,
             view_ms: std::cell::Cell::new(0),
             render_limit: RENDER_CHUNK,
@@ -1199,7 +1269,8 @@ impl cosmic::Application for App {
     fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::Key(key, mods, status) => self.on_key(key, mods, status),
-            Message::Layer(LayerEvent::Focused, id) if id == self.surface => {
+            Message::Focus(id, true) if id == self.surface => {
+                self.had_focus = true;
                 Task::batch([
                     text_input::focus(SEARCH_ID.clone()),
                     // A reused scrollable can keep an old offset; every open starts at the top.
@@ -1214,15 +1285,18 @@ impl cosmic::Application for App {
             }
             // Clicking another surface takes keyboard focus away: close (design 6). The
             // grace period skips any focus churn while the surface is still mapping.
-            Message::Layer(LayerEvent::Unfocused, id)
+            Message::Focus(id, false)
                 if id == self.surface
                     && self.mapped
                     && !self.closing
+                    && self.had_focus
                     && self.shown_at.elapsed() > FOCUS_GRACE =>
             {
                 self.close()
             }
-            Message::Layer(_, _) => Task::none(),
+            Message::Focus(_, _) => Task::none(),
+            Message::CloseRequested(id) if id == self.surface && self.mapped => self.close(),
+            Message::CloseRequested(_) => Task::none(),
             Message::Query(q) => {
                 self.query = q;
                 self.selected = 0;
