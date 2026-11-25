@@ -33,6 +33,9 @@ Then log out and back in, and run:
 gnome-extensions enable clippo@pengowray.github.io
 ```
 
+GNOME loads a newly installed extension only at login. Until the extension is running,
+`clippo watch` waits for it.
+
 The extension offers only the main format of an entry (its text or image), so formatting
 stored with an entry is lost when pasting on GNOME on Wayland.
 

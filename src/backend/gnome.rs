@@ -87,17 +87,13 @@ pub fn paste(keys: PasteKeys) -> Result<()> {
     block_on(call::<_, ()>("PressKeys", &(word,)))
 }
 
-/// Run `on_change` for the clipboard now and after each `OwnerChanged` signal. Fails at once
-/// if the extension is not running.
+/// Store the clipboard now and after each `OwnerChanged` signal. Until the extension is
+/// running (at login the service can start before GNOME Shell loads extensions), wait for it.
 pub fn start_watch(exe: &Path) -> Result<Watcher> {
-    // Check now, so a missing extension stops `clippo watch` with a clear message.
-    block_on(async {
-        let p = proxy().await?;
-        p.get_property::<u32>("Version").await.map_err(|e| not_running(e.into()))
-    })?;
     let exe = exe.to_path_buf();
     Ok(Box::new(move || {
         let watched = block_on(async {
+            wait_for_extension().await?;
             let p = proxy().await?;
             let mut changes = p.receive_signal("OwnerChanged").await?;
             // Changes that arrive while one is being stored are folded into one more ingest,
@@ -117,4 +113,25 @@ pub fn start_watch(exe: &Path) -> Result<Watcher> {
             Err(e) => format!("clipboard watching stopped: {e:#}"),
         }
     }))
+}
+
+/// Return once the extension's D-Bus name has an owner, saying in the log that clippo waits.
+async fn wait_for_extension() -> Result<()> {
+    let conn = zbus::Connection::session().await?;
+    let dbus = zbus::fdo::DBusProxy::new(&conn).await?;
+    let name = zbus::names::BusName::try_from(NAME)?;
+    let mut waiting = false;
+    while !dbus.name_has_owner(name.clone()).await? {
+        if !waiting {
+            eprintln!(
+                "clippo: waiting for the clippo GNOME Shell extension (clippo@pengowray.github.io) to start"
+            );
+            waiting = true;
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    }
+    if waiting {
+        eprintln!("clippo: the clippo GNOME Shell extension is running");
+    }
+    Ok(())
 }
