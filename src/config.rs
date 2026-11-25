@@ -68,11 +68,13 @@ pub enum PasteKeys {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum PasteMethod {
-    /// Wayland virtual keyboard, falling back to uinput.
+    /// The display's virtual keyboard, falling back to uinput.
     Auto,
-    /// Wayland virtual keyboard only.
+    /// The display's virtual keyboard only: the Wayland virtual keyboard protocol, or XTEST
+    /// on X11. Called `wayland` before X11 support, which is still accepted.
     #[default]
-    Wayland,
+    #[serde(alias = "wayland")]
+    Virtual,
     Uinput,
 }
 
@@ -94,7 +96,7 @@ pub struct PasteConfig {
 impl Default for PasteConfig {
     fn default() -> Self {
         Self {
-            method: PasteMethod::Wayland,
+            method: PasteMethod::Virtual,
             auto_paste: true,
             paste_on_select: true,
             keys: PasteKeys::ShiftInsert,
@@ -201,6 +203,15 @@ impl Config {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn old_paste_method_name_still_parses() {
+        let c: Config = toml::from_str("[paste]\nmethod = \"wayland\"\n").unwrap();
+        assert_eq!(c.paste.method, PasteMethod::Virtual);
+        let c: Config = toml::from_str("[paste]\nmethod = \"virtual\"\n").unwrap();
+        assert_eq!(c.paste.method, PasteMethod::Virtual);
+        assert!(toml::to_string(&c).unwrap().contains("method = \"virtual\""));
+    }
 
     #[test]
     fn partial_config_uses_defaults() {

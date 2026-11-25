@@ -435,7 +435,7 @@ Advanced (collapsed disclosure, `Advanced`):
 
 | Label | Control | Default | Config key |
 |---|---|---|---|
-| How keys are sent | dropdown: `Wayland virtual keyboard`, `Virtual input device (uinput)`, `Wayland first, then uinput` | Wayland | `paste.method` |
+| How keys are sent | dropdown: `Wayland virtual keyboard`, `Virtual input device (uinput)`, `Wayland first, then uinput` (`X11` in place of `Wayland` on X11) | Wayland | `paste.method` |
 | Wait before pasting (uinput only) | number, ms | `100` | `paste.delay_ms` |
 | Release Super and Alt first (uinput only) | toggle | on | `paste.release_modifiers` |
 

@@ -78,6 +78,7 @@ enum OcrSetup {
 
 pub struct State {
     config_file: PathBuf,
+    method_options: Vec<String>,
     paths: Paths,
     doc: DocumentMut,
     /// What the document currently parses to.
@@ -108,13 +109,17 @@ const PASTE_KEYS: [(PasteKeys, &str); 3] = [
     (PasteKeys::CtrlV, "ctrl-v"),
     (PasteKeys::CtrlShiftV, "ctrl-shift-v"),
 ];
-const METHOD_OPTIONS: [&str; 3] = [
-    "Wayland virtual keyboard",
-    "Virtual input device (uinput)",
-    "Wayland first, then uinput",
-];
+/// The "How keys are sent" choices, named for the display system in use.
+fn method_options() -> Vec<String> {
+    let display = if crate::session::is_x11() { "X11" } else { "Wayland" };
+    vec![
+        format!("{display} virtual keyboard"),
+        "Virtual input device (uinput)".into(),
+        format!("{display} first, then uinput"),
+    ]
+}
 const METHODS: [(PasteMethod, &str); 3] = [
-    (PasteMethod::Wayland, "wayland"),
+    (PasteMethod::Virtual, "virtual"),
     (PasteMethod::Uinput, "uinput"),
     (PasteMethod::Auto, "auto"),
 ];
@@ -150,6 +155,7 @@ impl State {
             .and_then(|s| s.parse::<DocumentMut>().ok())
             .unwrap_or_default();
         let mut st = Self {
+            method_options: method_options(),
             config_file: paths.config_file.clone(),
             paths: paths.clone(),
             doc,
@@ -190,7 +196,7 @@ impl State {
     }
 
     fn uinput_in_use(&self) -> bool {
-        self.cfg.paste.method != PasteMethod::Wayland
+        self.cfg.paste.method != PasteMethod::Virtual
     }
 
     /// What OCR is really doing, which the config alone does not say.
@@ -549,7 +555,7 @@ impl State {
                     settings::item::builder(strings::HOW_KEYS_ARE_SENT)
                         .description(strings::UINPUT_HELP)
                         .control(widget::dropdown(
-                            &METHOD_OPTIONS[..],
+                            &self.method_options[..],
                             Some(method),
                             Message::Method,
                         )),

@@ -111,7 +111,7 @@ engine = "auto"           # "ocrs", "tesseract", "auto" or "off"
 tesseract_lang = "eng"    # passed to tesseract -l
 
 [paste]
-method = "wayland"        # "wayland" (virtual keyboard protocol; XTEST on X11), "uinput", or "auto" (tries "wayland", then "uinput")
+method = "virtual"        # "virtual" (the Wayland virtual keyboard, or XTEST on X11), "uinput", or "auto" (tries "virtual", then "uinput")
 auto_paste = true         # `clippo plain` pastes after replacing the clipboard
 paste_on_select = true    # `clippo menu` pastes the entry you pick
 keys = "shift-insert"     # "shift-insert", "ctrl-v" or "ctrl-shift-v"
@@ -133,9 +133,9 @@ format = "%Y-%m-%d"
 format = "%Y-%m-%d %H:%M:%S"
 ```
 
-Pasting presses keys through a virtual keyboard. The Wayland method needs a compositor with
-`zwp_virtual_keyboard_v1` (COSMIC, Sway, Hyprland). On X11, the `wayland` and `auto` methods
-press the keys through the XTEST extension instead. The uinput method needs `/dev/uinput` to be writable by your user.
+Pasting presses keys through a virtual keyboard. On Wayland, the `virtual` method needs a
+compositor with `zwp_virtual_keyboard_v1` (COSMIC, Sway, Hyprland). On X11, it uses the XTEST
+extension. The method was called `wayland` before, and that name still works. The uinput method needs `/dev/uinput` to be writable by your user.
 On Ubuntu and Pop!_OS, the `steam-devices` package sets this up. Shift+Insert pastes in most
 apps, including terminals, which is why it's the default.
 
