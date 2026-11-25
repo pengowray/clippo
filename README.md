@@ -6,30 +6,43 @@ thumbnails in the window, and the text found in them is searchable.
 
 ## Desktops
 
-clippo uses the session type in `XDG_SESSION_TYPE` (`wayland` or `x11`). If it is not set,
-clippo uses Wayland when `WAYLAND_DISPLAY` is set, and X11 when only `DISPLAY` is set.
-`clippo watch` prints the session type it uses when it starts. To choose one yourself, set
-`CLIPPO_SESSION` to `wayland` or `x11`.
-
 | | Wayland (COSMIC) | X11 (GNOME on Xorg) | GNOME on Wayland |
 |---|---|---|---|
-| Recording history | yes | yes | no |
-| `clippo copy`, `plain`, `macro` | yes | yes | no |
-| Pasting | virtual keyboard or uinput | XTEST or uinput | no |
-| History window (`clippo window`) | yes | yes | no |
-| Emoji picker (`clippo emoji`) | yes | yes | no |
+| Recording history | yes | yes | yes, with the clippo extension |
+| `clippo copy`, `plain`, `macro` | yes | yes | yes, with the clippo extension |
+| Formatting (HTML, RTF) when pasting | yes | yes | no: plain text or the image only |
+| Pasting | virtual keyboard or uinput | XTEST or uinput | the extension's virtual keyboard, or uinput |
+| History window (`clippo window`) | yes | yes | yes |
+| Emoji picker (`clippo emoji`) | yes | yes | yes |
 
 Wayland needs `wl-clipboard` (`wl-paste`, `wl-copy`), and a compositor with a
 data-control protocol (`ext_data_control_v1` or `zwlr_data_control`).
 
 X11 needs the XFixes and XTEST extensions, which Xorg has.
 
-GNOME on Wayland does not work: its compositor (Mutter) has no data-control protocol, so
-other programs cannot watch or set the clipboard. Log in with "GNOME on Xorg" instead.
+GNOME on Wayland needs the clippo GNOME Shell extension, because GNOME's compositor (Mutter)
+does not let other programs watch or set the clipboard. To install it:
 
-On Wayland, the history window and the emoji picker use the layer-shell protocol. On X11
-they open as an ordinary window without a title bar, centred on the monitor under the mouse
-pointer.
+```sh
+ln -s "$PWD/gnome-extension/clippo@pengowray.github.io" ~/.local/share/gnome-shell/extensions/
+```
+
+Then log out and back in, and run:
+
+```sh
+gnome-extensions enable clippo@pengowray.github.io
+```
+
+The extension offers only the main format of an entry (its text or image), so formatting
+stored with an entry is lost when pasting on GNOME on Wayland.
+
+On COSMIC, the history window and the emoji picker use the layer-shell protocol. On X11 and on
+GNOME on Wayland they open as an ordinary window without a title bar, centred on the monitor
+under the mouse pointer.
+
+clippo picks the desktop from `XDG_SESSION_TYPE` and `XDG_CURRENT_DESKTOP`. `clippo watch`
+prints the one it uses when it starts. To choose one yourself, set `CLIPPO_SESSION` to
+`wayland`, `x11` or `gnome`.
 
 ## Build
 
@@ -41,7 +54,7 @@ cargo build --release   # OCR is very slow in debug builds
 
 | Command | What it does |
 |---|---|
-| `clippo watch` | Records clipboard history until stopped. On Wayland it runs `wl-paste --watch clippo ingest`; on X11 it runs `clippo ingest` after each copy. It also runs an OCR worker for new images, and listens on the service socket that the other clippo commands use. |
+| `clippo watch` | Records clipboard history until stopped. On Wayland it runs `wl-paste --watch clippo ingest`; on X11 and GNOME on Wayland it runs `clippo ingest` after each copy. It also runs an OCR worker for new images, and listens on the service socket that the other clippo commands use. |
 | `clippo ingest` | Stores clipboard data from stdin. `clippo watch` runs this. |
 | `clippo window` | Opens the history window. Picking an entry copies it, then pastes it if `paste_on_select` is on. Running it again closes the window. `clippo menu` does the same. |
 | `clippo emoji` | Opens the emoji and symbol picker in the same window: emoji by category, accented letters, Greek, Cyrillic, maths and other text symbols, searchable by name (`tau`, `e acute`, `:heart:`, `U+03C4`). Picking one pastes it without recording it in history. Alt+click adds a favourite. |
@@ -209,7 +222,7 @@ Macros can be bound the same way, for example `clippo macro 2` to paste today's 
 
 Remove or rebind any existing `Super+V` shortcut (such as one running cliphist) first.
 
-## GNOME shortcut (X11)
+## GNOME shortcuts
 
 GNOME uses `Super+V` and `Super+M` to show the notification list. To free `Super+V`, leave the
 notification list on `Super+M` only:

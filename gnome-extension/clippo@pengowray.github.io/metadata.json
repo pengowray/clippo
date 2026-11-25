@@ -1,0 +1,7 @@
+{
+  "uuid": "clippo@pengowray.github.io",
+  "name": "clippo helper",
+  "description": "Lets clippo (clipboard history) watch and set the clipboard, press paste keys, and place its window, on GNOME on Wayland.",
+  "shell-version": ["45", "46", "47", "48", "49"],
+  "url": "https://github.com/pengowray/clippo"
+}

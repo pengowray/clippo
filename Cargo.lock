@@ -864,6 +864,7 @@ dependencies = [
  "directories",
  "emojis",
  "evdev",
+ "futures-util",
  "image",
  "libc",
  "libcosmic",

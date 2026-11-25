@@ -546,11 +546,12 @@ impl App {
         Task::batch([show, load])
     }
 
-    /// Without a layer shell (X11): open an undecorated, always-on-top window centred on the
-    /// monitor under the pointer. Each open makes a new window, with a new id.
+    /// Without a layer shell (X11, GNOME): open an undecorated, always-on-top window centred on
+    /// the monitor under the pointer. Each open makes a new window, with a new id.
     fn open_plain_window(&mut self) -> Task<Message> {
         let size = iced::Size::new(WIDTH as f32, HEIGHT as f32);
-        let position = match crate::backend::x11::pointer_monitor() {
+        let backend = crate::backend::current();
+        let position = match backend.window_area() {
             Some((x, y, w, h)) => window::Position::Specific(iced::Point::new(
                 x as f32 + (w as f32 - size.width) / 2.0,
                 y as f32 + (h as f32 - size.height) / 2.0,
@@ -572,10 +573,10 @@ impl App {
         });
         self.surface = id;
         open.then(|id| window::raw_id::<Message>(id))
-            .then(|xid| {
+            .then(move |xid| {
                 iced::Task::future(async move {
                     let activated = tokio::task::spawn_blocking(move || {
-                        crate::backend::x11::activate(xid as u32)
+                        backend.activate_window(xid)
                     })
                     .await;
                     if let Ok(Err(e)) = activated {
