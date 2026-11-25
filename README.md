@@ -223,8 +223,9 @@ gsettings set org.gnome.shell.keybindings toggle-message-tray "['<Super>m']"
 
 Then open Settings > Keyboard > View and Customize Shortcuts > Custom Shortcuts, and add:
 
-- `clippo menu` with the shortcut `Super+V`
+- `clippo window` with the shortcut `Super+V` (or `clippo menu`, if you prefer the rofi picker)
 - `clippo plain` with the shortcut `Super+Alt+V`
+- `clippo emoji` with the shortcut `Super+;`
 - `clippo macro 2` (or another macro number) on a shortcut of your choice
 
 ## License
