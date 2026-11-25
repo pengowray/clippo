@@ -28,7 +28,7 @@ X11 needs the XFixes and XTEST extensions, which Xorg has. Install `rofi` for `c
 GNOME on Wayland does not work: its compositor (Mutter) has no data-control protocol, so
 other programs cannot watch or set the clipboard. Log in with "GNOME on Xorg" instead.
 
-The history window and the emoji picker are layer-shell windows, which X11 does not have.
+The history window and the emoji picker use the Wayland layer-shell protocol, which X11 does not have.
 
 ## Build
 
@@ -40,7 +40,7 @@ cargo build --release   # OCR is very slow in debug builds
 
 | Command | What it does |
 |---|---|
-| `clippo watch` | Records clipboard history until stopped. Runs `wl-paste --watch clippo ingest` on Wayland (on X11, runs `clippo ingest` after each copy), an OCR worker for new images, and the service socket the other commands use. |
+| `clippo watch` | Records clipboard history until stopped. On Wayland it runs `wl-paste --watch clippo ingest`; on X11 it runs `clippo ingest` after each copy. It also runs an OCR worker for new images, and listens on the service socket that the other clippo commands use. |
 | `clippo ingest` | Stores clipboard data from stdin. `clippo watch` runs this. |
 | `clippo menu` | Opens the history picker in fuzzel (rofi on X11). Selecting an entry copies it, then pastes it if `paste_on_select` is on. If the picker is already open, closes it. |
 | `clippo window` | Opens the history window (the fuzzel picker's replacement). Opening it again closes it. |
@@ -76,10 +76,11 @@ Notes:
 - Running `clippo ingest` by hand stores stdin as-is. It only checks the live clipboard
   (for image types, extra formats and the password-manager hint) when run by
   `clippo watch`.
-- On X11, the app you copied from keeps the clipboard data. When you copy from clippo,
-  a `clippo serve-clipboard` process holds the data until something else is copied, then exits.
-  It sets the primary selection too (the text a middle click pastes), because Shift+Insert
-  pastes the primary selection in some X11 terminals, such as cosmic-term and xterm.
+- On X11, the app you copied from keeps the clipboard data and sends it to apps that paste.
+  When clippo puts an entry on the clipboard (`clippo copy`, the picker, `plain`, `macro`),
+  a `clippo serve-clipboard` process sends the data until something else is copied, then exits.
+  This process sets the primary selection too (the text a middle click pastes), because
+  Shift+Insert pastes the primary selection in some X11 terminals, such as cosmic-term and xterm.
 
 ## Files
 
@@ -107,12 +108,12 @@ engine = "auto"           # "ocrs", "tesseract", "auto" or "off"
 tesseract_lang = "eng"    # passed to tesseract -l
 
 [paste]
-method = "wayland"        # "wayland" (virtual keyboard protocol; XTEST on X11), "uinput", or "auto" = wayland then uinput
+method = "wayland"        # "wayland" (virtual keyboard protocol; XTEST on X11), "uinput", or "auto" (tries "wayland", then "uinput")
 auto_paste = true         # `clippo plain` pastes after replacing the clipboard
 paste_on_select = true    # `clippo menu` pastes the entry you pick
 keys = "shift-insert"     # "shift-insert", "ctrl-v" or "ctrl-shift-v"
 delay_ms = 100            # uinput only: wait before pasting, so the shortcut keys can be released
-release_modifiers = true  # uinput and X11: send Super and Alt key-ups before pasting
+release_modifiers = true  # uinput method, and all methods on X11: release Super and Alt before pasting
 
 [plain]
 strip_markdown = true     # `clippo plain` also removes Markdown syntax when the text looks like Markdown
@@ -181,8 +182,8 @@ systemctl --user enable --now clippo.service
 The service also serves the clipboard for multi-format pastes, so restarting it while such a
 paste is on the clipboard clears the clipboard.
 
-The same service file works on COSMIC and on GNOME. clippo reads `XDG_SESSION_TYPE` from the
-systemd user environment, which the desktop sets when you log in.
+The same `clippo.service` file works on COSMIC and on GNOME. The desktop sets `XDG_SESSION_TYPE`
+in the systemd user environment when you log in, and the service reads it from there.
 
 ## COSMIC shortcut
 
@@ -210,14 +211,18 @@ Remove or rebind any existing `Super+V` shortcut (such as one running cliphist) 
 
 ## GNOME shortcut (X11)
 
-GNOME uses `Super+V` to show the notification list. To free it, keeping `Super+M` for the list:
+GNOME uses `Super+V` and `Super+M` to show the notification list. To free `Super+V`, leave the
+notification list on `Super+M` only:
 
 ```sh
 gsettings set org.gnome.shell.keybindings toggle-message-tray "['<Super>m']"
 ```
 
-Then open Settings > Keyboard > View and Customise Shortcuts > Custom Shortcuts, and add
-`clippo menu` on `Super+V` and `clippo plain` on `Super+Alt+V`, as in the COSMIC section.
+Then open Settings > Keyboard > View and Customize Shortcuts > Custom Shortcuts, and add:
+
+- `clippo menu` with the shortcut `Super+V`
+- `clippo plain` with the shortcut `Super+Alt+V`
+- `clippo macro 2` (or another macro number) on a shortcut of your choice
 
 ## License
 
