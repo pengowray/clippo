@@ -115,6 +115,16 @@ pub fn start_watch(exe: &Path) -> Result<Watcher> {
     }))
 }
 
+/// Is the extension running (its D-Bus name has an owner)?
+pub fn extension_running() -> bool {
+    block_on(async {
+        let conn = zbus::Connection::session().await?;
+        let dbus = zbus::fdo::DBusProxy::new(&conn).await?;
+        Ok(dbus.name_has_owner(zbus::names::BusName::try_from(NAME)?).await?)
+    })
+    .unwrap_or(false)
+}
+
 /// Return once the extension's D-Bus name has an owner, saying in the log that clippo waits.
 async fn wait_for_extension() -> Result<()> {
     let conn = zbus::Connection::session().await?;

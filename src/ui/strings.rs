@@ -190,6 +190,8 @@ pub const FOOTER_SAVED_NO_SERVICE: &str =
     "Saved. Restart the clippo service to apply paste and OCR settings";
 
 pub const BANNER_NOT_RECORDING: &str = "Not recording. Start the clippo service to save new copies";
+pub const BANNER_NO_EXTENSION: &str =
+    "Not recording: the clippo GNOME extension isn't running. Log out and back in, or turn it on in Extensions";
 pub const BANNER_NO_ENGINE: &str = "Text in images is not being read. Set up an engine in Settings";
 
 pub const EMPTY_TITLE: &str = "Nothing copied yet";

@@ -27,7 +27,7 @@ use cosmic::surface::action::{LiveSettings, simple_layer_shell};
 use cosmic::widget::{self, column, container, row, text, text_input};
 use cosmic::{Element, theme};
 
-use crate::backend::WindowKind;
+use crate::backend::{Backend, WindowKind};
 use crate::clipboard::{self, CopyMode};
 use crate::config::{Config, OcrEngineKind, Paths};
 use crate::save::{self, SaveFormat};
@@ -183,7 +183,7 @@ pub enum Message {
     /// Reload the list and banner state right after mapping.
     Refresh,
     ClipboardNow(bool),
-    Status(bool, bool),
+    Status(Recording, bool),
     /// A frame is about to be drawn; used only to time the first one after a show.
     Redraw,
     /// The list scrolled to this relative offset (0 top, 1 bottom).
@@ -232,7 +232,7 @@ pub struct App {
     page: Page,
     /// Entry the footer's Undo would bring back.
     deleted: Option<i64>,
-    service_running: bool,
+    recording: Recording,
     ocr_engine_missing: bool,
     closing: bool,
     /// Resident mode: the surface comes and goes; the process stays.
@@ -469,9 +469,9 @@ impl App {
         iced::Task::future(async move {
             tokio::task::spawn_blocking(move || service_status(&cfg, &paths))
                 .await
-                .unwrap_or((false, false))
+                .unwrap_or((Recording::ServiceStopped, false))
         })
-        .map(|(running, missing)| cosmic::Action::App(Message::Status(running, missing)))
+        .map(|(recording, missing)| cosmic::Action::App(Message::Status(recording, missing)))
     }
 
     fn set_footer(&mut self, f: Footer) {
@@ -969,8 +969,10 @@ impl App {
             .align_y(iced::Alignment::Center)
             .height(40);
 
-        let banner = if !self.service_running {
+        let banner = if self.recording == Recording::ServiceStopped {
             Some(strings::BANNER_NOT_RECORDING)
+        } else if self.recording == Recording::NoExtension {
+            Some(strings::BANNER_NO_EXTENSION)
         } else if self.ocr_engine_missing {
             Some(strings::BANNER_NO_ENGINE)
         } else {
@@ -1152,11 +1154,30 @@ fn clipboard_holds(db: &std::path::Path, id: i64, mime: &str) -> bool {
         .any(|c| matches!(store.find(mime, c), Ok(Some(s)) if s.id == id))
 }
 
-/// (service running, OCR on but no engine) for the banners (design 7.3).
-fn service_status(cfg: &Config, paths: &Paths) -> (bool, bool) {
+/// Whether new copies are being saved, for the banners (design 7.3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Recording {
+    Yes,
+    /// The clippo service is not running.
+    ServiceStopped,
+    /// The service runs, but on GNOME the Shell extension it watches through does not.
+    NoExtension,
+}
+
+/// (recording, OCR on but no engine) for the banners.
+fn service_status(cfg: &Config, paths: &Paths) -> (Recording, bool) {
     match service::status(paths) {
-        Ok(s) => (true, s.ocr.is_none() && cfg.ocr.engine != OcrEngineKind::Off),
-        Err(_) => (false, false),
+        Ok(s) => {
+            let recording = if crate::backend::current() == Backend::Gnome
+                && !crate::backend::gnome::extension_running()
+            {
+                Recording::NoExtension
+            } else {
+                Recording::Yes
+            };
+            (recording, s.ocr.is_none() && cfg.ocr.engine != OcrEngineKind::Off)
+        }
+        Err(_) => (Recording::ServiceStopped, false),
     }
 }
 
@@ -1212,7 +1233,7 @@ impl cosmic::Application for App {
         };
         let resident = flags.toggles.is_some();
         // Banner state arrives asynchronously (`Message::Status`) once the window is up.
-        let (service_running, ocr_engine_missing) = (true, false);
+        let (recording, ocr_engine_missing) = (Recording::Yes, false);
         let settings = crate::ui::settings::State::new(&flags.cfg, &flags.paths, 0);
         let emoji_state = emoji::State::new(&flags.paths);
         let start_page = flags.page;
@@ -1238,7 +1259,7 @@ impl cosmic::Application for App {
             }),
             page: Page::List,
             deleted: None,
-            service_running,
+            recording,
             ocr_engine_missing,
             closing: false,
             toggles: flags
@@ -1367,8 +1388,8 @@ impl cosmic::Application for App {
                 self.top_is_clipboard = b;
                 Task::none()
             }
-            Message::Status(running, missing) => {
-                self.service_running = running;
+            Message::Status(recording, missing) => {
+                self.recording = recording;
                 self.ocr_engine_missing = missing;
                 Task::none()
             }
