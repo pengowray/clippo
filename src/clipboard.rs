@@ -1,135 +1,44 @@
-//! The live clipboard: reading it, and putting entries on it. On X11 this all goes through
-//! `x11.rs`; the rest of this note is about Wayland.
-//!
-//! Single-type copies go through `wl-copy`, which forks a process that serves the clipboard
-//! until someone else copies. A copy that offers several types (the primary plus stored HTML
-//! or RTF) uses `wl-clipboard-rs` instead: `wl-copy` serves one type per process and running
-//! one per type does not work, as each takes ownership from the last. `wl-clipboard-rs` 0.9
-//! binds `ext_data_control_v1` when the compositor has it and falls back to
-//! `zwlr_data_control_v1`, so it works on COSMIC either way. Its source lives in a thread of
-//! the calling process, so the resident `clippo watch` does the serving (see `service::serve`)
-//! and the clipboard is lost if the service restarts, unlike `wl-copy`'s fork.
+//! The live clipboard: reading it, and putting entries on it, through the backend for this
+//! session (`backend/`).
 
-use std::io::Write;
-use std::process::{Command, Stdio};
-use std::time::{Duration, Instant};
+use anyhow::{Result, bail};
 
-use anyhow::{Context, Result, anyhow, bail};
-use wl_clipboard_rs::copy::{MimeSource, MimeType, Options, Source};
-
+use crate::backend;
 use crate::config::Paths;
 use crate::ingest::TEXT_MIME;
 use crate::markdown;
 use crate::service;
-use crate::session;
 use crate::store::{Format, OcrStatus, Store};
-use crate::x11;
-
-/// How long to wait for the compositor to report our multi-type source as the owner.
-const OWNERSHIP_WAIT: Duration = Duration::from_millis(500);
-
-/// Run `wl-paste` with `args`; `None` if it fails (e.g. empty clipboard or type not offered).
-fn wl_paste(args: &[&str]) -> Option<Vec<u8>> {
-    let out = Command::new("wl-paste")
-        .args(args)
-        .stdin(Stdio::null())
-        .stderr(Stdio::null())
-        .output()
-        .ok()?;
-    out.status.success().then_some(out.stdout)
-}
 
 /// The clipboard's data as `mime`, exactly as offered; `None` if it isn't offered.
 pub fn read(mime: &str) -> Option<Vec<u8>> {
-    if session::is_x11() {
-        return x11::read(mime);
-    }
-    wl_paste(&["--no-newline", "--type", mime])
+    backend::current().read(mime)
 }
 
 /// The clipboard's text, from whichever text type is offered.
 pub fn read_text() -> Option<Vec<u8>> {
-    if session::is_x11() {
-        return x11::read_text();
-    }
-    wl_paste(&["--no-newline", "--type", "text"])
+    backend::current().read_text()
+}
+
+/// Types offered by the current clipboard owner.
+pub fn list_types() -> Vec<String> {
+    backend::current().list_types()
+}
+
+/// Put `data` on the clipboard. With no `mime`, the usual set of text types is offered.
+pub fn copy(mime: Option<&str>, data: &[u8]) -> Result<()> {
+    backend::current().copy(mime, data)
+}
+
+/// Offer every format at once; the first is the primary. Returns once the new content is on
+/// the clipboard, so a paste keystroke sent afterwards gets it.
+pub fn copy_formats(formats: &[Format]) -> Result<()> {
+    backend::current().copy_formats(formats)
 }
 
 /// Does this offered type hold plain text?
 pub fn is_text_type(t: &str) -> bool {
     t.starts_with("text/plain") || t == "UTF8_STRING" || t == "STRING"
-}
-
-/// Types offered by the current clipboard owner.
-pub fn list_types() -> Vec<String> {
-    if session::is_x11() {
-        return x11::list_types();
-    }
-    let raw = wl_paste(&["--list-types"]).unwrap_or_default();
-    String::from_utf8_lossy(&raw)
-        .lines()
-        .map(|l| l.trim().to_string())
-        .filter(|l| !l.is_empty())
-        .collect()
-}
-
-/// Put `data` on the clipboard. With no `mime`, the usual set of text types is offered.
-pub fn copy(mime: Option<&str>, data: &[u8]) -> Result<()> {
-    if session::is_x11() {
-        return x11::copy(&[Format {
-            mime: mime.unwrap_or(TEXT_MIME).to_string(),
-            content: data.to_vec(),
-        }]);
-    }
-    let mut cmd = Command::new("wl-copy");
-    if let Some(mime) = mime {
-        cmd.args(["--type", mime]);
-    }
-    let mut child = cmd
-        .stdin(Stdio::piped())
-        .spawn()
-        .context("could not run wl-copy")?;
-    child.stdin.take().expect("piped stdin").write_all(data)?;
-    // wl-copy forks to serve the clipboard, so this returns once it has taken ownership.
-    if !child.wait()?.success() {
-        bail!("wl-copy failed");
-    }
-    Ok(())
-}
-
-/// Offer every format at once, from a thread of this process that serves until another
-/// client takes the clipboard. The first format is the primary. Returns once the compositor
-/// reports the new offer, so a paste keystroke sent afterwards gets this content.
-pub fn copy_formats(formats: &[Format]) -> Result<()> {
-    if session::is_x11() {
-        return x11::copy(formats);
-    }
-    let primary = formats.first().ok_or_else(|| anyhow!("nothing to copy"))?;
-    let sources = formats
-        .iter()
-        .map(|f| MimeSource {
-            source: Source::Bytes(f.content.clone().into_boxed_slice()),
-            mime_type: MimeType::Specific(f.mime.clone()),
-        })
-        .collect();
-    Options::new()
-        .copy_multi(sources)
-        .map_err(|e| anyhow!("could not take the clipboard: {e}"))?;
-    // copy_multi returns before its thread flushes set_selection. Waiting until the primary
-    // type is offered catches the change for images and for text replacing an image; when
-    // text replaces text the previous owner offers the same type, so this passes at once and
-    // the remaining race is the thread's first flush (microseconds; the menu also waits 50 ms
-    // before pasting).
-    let start = Instant::now();
-    loop {
-        if list_types().contains(&primary.mime) {
-            return Ok(());
-        }
-        if start.elapsed() > OWNERSHIP_WAIT {
-            bail!("the compositor did not accept the clipboard offer");
-        }
-        std::thread::sleep(Duration::from_millis(10));
-    }
 }
 
 /// Which form of an entry to put on the clipboard.

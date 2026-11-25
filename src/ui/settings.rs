@@ -111,7 +111,7 @@ const PASTE_KEYS: [(PasteKeys, &str); 3] = [
 ];
 /// The "How keys are sent" choices, named for the display system in use.
 fn method_options() -> Vec<String> {
-    let display = if crate::session::is_x11() { "X11" } else { "Wayland" };
+    let display = crate::backend::current().name();
     vec![
         format!("{display} virtual keyboard"),
         "Virtual input device (uinput)".into(),

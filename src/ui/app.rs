@@ -27,6 +27,7 @@ use cosmic::surface::action::{LiveSettings, simple_layer_shell};
 use cosmic::widget::{self, column, container, row, text, text_input};
 use cosmic::{Element, theme};
 
+use crate::backend::WindowKind;
 use crate::clipboard::{self, CopyMode};
 use crate::config::{Config, OcrEngineKind, Paths};
 use crate::save::{self, SaveFormat};
@@ -518,8 +519,8 @@ impl App {
         }
         // Map first with the list from the last open; `Refresh` replaces it a moment later.
         let load = cosmic::task::message(cosmic::Action::App(Message::Refresh));
-        if crate::session::is_x11() {
-            return Task::batch([self.open_x11_window(), load]);
+        if crate::backend::current().window_kind() == WindowKind::Plain {
+            return Task::batch([self.open_plain_window(), load]);
         }
         let surface = self.surface;
         let show = cosmic::surface::surface_task(simple_layer_shell::<Message>(
@@ -545,11 +546,11 @@ impl App {
         Task::batch([show, load])
     }
 
-    /// X11 has no layer shell: open an undecorated, always-on-top window centred on the
+    /// Without a layer shell (X11): open an undecorated, always-on-top window centred on the
     /// monitor under the pointer. Each open makes a new window, with a new id.
-    fn open_x11_window(&mut self) -> Task<Message> {
+    fn open_plain_window(&mut self) -> Task<Message> {
         let size = iced::Size::new(WIDTH as f32, HEIGHT as f32);
-        let position = match crate::x11::pointer_monitor() {
+        let position = match crate::backend::x11::pointer_monitor() {
             Some((x, y, w, h)) => window::Position::Specific(iced::Point::new(
                 x as f32 + (w as f32 - size.width) / 2.0,
                 y as f32 + (h as f32 - size.height) / 2.0,
@@ -574,7 +575,7 @@ impl App {
             .then(|xid| {
                 iced::Task::future(async move {
                     let activated = tokio::task::spawn_blocking(move || {
-                        crate::x11::activate(xid as u32)
+                        crate::backend::x11::activate(xid as u32)
                     })
                     .await;
                     if let Ok(Err(e)) = activated {
@@ -587,10 +588,9 @@ impl App {
 
     /// Take the window or surface off the screen.
     fn unmap(&self) -> Task<Message> {
-        if crate::session::is_x11() {
-            window::close(self.surface)
-        } else {
-            destroy_layer_surface(self.surface)
+        match crate::backend::current().window_kind() {
+            WindowKind::Plain => window::close(self.surface),
+            WindowKind::LayerShell => destroy_layer_surface(self.surface),
         }
     }
 

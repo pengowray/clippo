@@ -1,11 +1,10 @@
-//! The X11 clipboard: watching it (XFixes), reading it, owning it, and pressing paste keys
-//! (XTEST). Used when the session is X11 (see `session.rs`); Wayland goes through
-//! `wl-clipboard` and `vkbd.rs` instead.
+//! X11: watching the clipboard (XFixes), reading it, owning it, pressing paste keys (XTEST),
+//! and placing and focusing the history window.
 //!
 //! X11 has no clipboard daemon: whoever copied keeps the data and hands it out on request.
 //! So a copy runs `clippo serve-clipboard`, a small process that owns the selection, answers
 //! requests until another app copies, and then exits. It owns PRIMARY as well as CLIPBOARD,
-//! because Shift+Insert (the default paste keys) pastes PRIMARY in xterm and VTE terminals.
+//! because Shift+Insert (the default paste keys) pastes PRIMARY in some X11 terminals.
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Write};
@@ -35,6 +34,8 @@ use crate::store::Format;
 const READ_TIMEOUT: Duration = Duration::from_secs(2);
 /// How long `copy` waits for `serve-clipboard` to report that it owns the clipboard.
 const SERVE_START_TIMEOUT: Duration = Duration::from_secs(3);
+/// How long a paste waits for focus to leave the closing history window.
+const FOCUS_RETURN_WAIT: Duration = Duration::from_millis(500);
 /// How long a paste waits for the shortcut's keys to be released.
 const KEY_RELEASE_WAIT: Duration = Duration::from_secs(1);
 /// Data bigger than this is sent in chunks of this size (the INCR protocol).
@@ -645,6 +646,7 @@ pub fn paste(keys: PasteKeys, release_modifiers: bool) -> Result<()> {
     };
     let fake = |kind: u8, code: Keycode| conn.xtest_fake_input(kind, code, CURRENT_TIME, root, 0, 0, 0);
 
+    wait_until_clippo_unfocused(&conn, root)?;
     // While a shortcut's key (the V of Super+V) is held, the window manager's key grab
     // receives every key, so the paste would go to it instead of the focused app. Wait for
     // the non-modifier keys to be released.
@@ -683,6 +685,32 @@ pub fn paste(keys: PasteKeys, release_modifiers: bool) -> Result<()> {
     }
     // A round trip makes sure the server has processed the keys before we disconnect.
     conn.get_input_focus()?.reply()?;
+    Ok(())
+}
+
+/// After the history window closes, the window manager needs a moment to give focus back to
+/// the app the user was in; keys pressed before then would go nowhere. Wait while the active
+/// window is clippo's, for up to `FOCUS_RETURN_WAIT`.
+fn wait_until_clippo_unfocused(conn: &RustConnection, root: Window) -> Result<()> {
+    let active = conn.intern_atom(false, b"_NET_ACTIVE_WINDOW")?.reply()?.atom;
+    let deadline = Instant::now() + FOCUS_RETURN_WAIT;
+    while Instant::now() < deadline {
+        let win = conn
+            .get_property(false, root, active, AtomEnum::WINDOW, 0, 1)?
+            .reply()?
+            .value32()
+            .and_then(|mut v| v.next())
+            .unwrap_or(NONE);
+        let class = conn
+            .get_property(false, win, AtomEnum::WM_CLASS, AtomEnum::STRING, 0, 64)?
+            .reply()
+            .map(|r| r.value)
+            .unwrap_or_default();
+        if win == NONE || !class.split(|b| *b == 0).any(|part| part == b"clippo") {
+            return Ok(());
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
     Ok(())
 }
 

@@ -1,3 +1,4 @@
+mod backend;
 mod clipboard;
 mod config;
 mod emoji;
@@ -10,14 +11,11 @@ mod paste;
 mod plain;
 mod save;
 mod service;
-mod session;
 mod skip;
 mod store;
 mod thumbs;
 mod ui;
-mod vkbd;
 mod watch;
-mod x11;
 
 use std::io::{Read, Write};
 use std::path::PathBuf;
@@ -159,7 +157,7 @@ fn run(cli: Cli) -> Result<()> {
     match cli.command {
         Cmd::Watch => watch::run(&cfg, &paths),
         Cmd::Ingest => ingest::run(&cfg, &paths),
-        Cmd::ServeClipboard => x11::serve_from_stdin(),
+        Cmd::ServeClipboard => backend::x11::serve_from_stdin(),
         Cmd::Window => ui::run(&cfg, &paths, ui::WindowPage::List),
         Cmd::Emoji => ui::run(&cfg, &paths, ui::WindowPage::Emoji),
         Cmd::Plain {
