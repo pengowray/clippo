@@ -1,8 +1,8 @@
 # clippo
 
-Clipboard history for Wayland (tested on COSMIC) and X11 (tested on GNOME), with a picker and
-OCR for copied images. Text and images you copy are stored in SQLite. Images show as thumbnails
-in the picker, and the text found in them is searchable.
+Clipboard history for Wayland (tested on COSMIC) and X11 (tested on GNOME), with a history
+window and OCR for copied images. Text and images you copy are stored in SQLite. Images show as
+thumbnails in the window, and the text found in them is searchable.
 
 ## Desktops
 
@@ -16,15 +16,13 @@ clippo uses Wayland when `WAYLAND_DISPLAY` is set, and X11 when only `DISPLAY` i
 | Recording history | yes | yes | no |
 | `clippo copy`, `plain`, `macro` | yes | yes | no |
 | Pasting | virtual keyboard or uinput | XTEST or uinput | no |
-| Picker (`clippo menu`) | fuzzel | rofi | no |
 | History window (`clippo window`) | yes | yes | no |
 | Emoji picker (`clippo emoji`) | yes | yes | no |
 
-Wayland needs `wl-clipboard` (`wl-paste`, `wl-copy`) and `fuzzel`, and a compositor with a
+Wayland needs `wl-clipboard` (`wl-paste`, `wl-copy`), and a compositor with a
 data-control protocol (`ext_data_control_v1` or `zwlr_data_control`).
 
-X11 needs the XFixes and XTEST extensions, which Xorg has. Install `rofi` for `clippo menu`
-(`sudo apt install rofi`).
+X11 needs the XFixes and XTEST extensions, which Xorg has.
 
 GNOME on Wayland does not work: its compositor (Mutter) has no data-control protocol, so
 other programs cannot watch or set the clipboard. Log in with "GNOME on Xorg" instead.
@@ -45,8 +43,7 @@ cargo build --release   # OCR is very slow in debug builds
 |---|---|
 | `clippo watch` | Records clipboard history until stopped. On Wayland it runs `wl-paste --watch clippo ingest`; on X11 it runs `clippo ingest` after each copy. It also runs an OCR worker for new images, and listens on the service socket that the other clippo commands use. |
 | `clippo ingest` | Stores clipboard data from stdin. `clippo watch` runs this. |
-| `clippo menu` | Opens the history picker in fuzzel (rofi on X11). Selecting an entry copies it, then pastes it if `paste_on_select` is on. If the picker is already open, closes it. |
-| `clippo window` | Opens the history window (the fuzzel picker's replacement). Opening it again closes it. |
+| `clippo window` | Opens the history window. Picking an entry copies it, then pastes it if `paste_on_select` is on. Running it again closes the window. `clippo menu` does the same. |
 | `clippo emoji` | Opens the emoji and symbol picker in the same window: emoji by category, accented letters, Greek, Cyrillic, maths and other text symbols, searchable by name (`tau`, `e acute`, `:heart:`, `U+03C4`). Picking one pastes it without recording it in history. Alt+click adds a favourite. |
 | `clippo plain [--paste \| --no-paste] [--markdown \| --no-markdown]` | Replaces the clipboard with plain text, then pastes it if `auto_paste` is on. For an image, uses the text found in it. Text that looks like Markdown has the Markdown syntax removed when `plain.strip_markdown` is on; the flags override the setting. |
 | `clippo copy <id> [--plain \| --no-markdown]` | Puts an entry on the clipboard without pasting. Offers every stored format (HTML, RTF) when the service is running. `--plain` offers only the text (an image's recognised text); `--no-markdown` offers the text with Markdown syntax removed. |
@@ -113,7 +110,7 @@ tesseract_lang = "eng"    # passed to tesseract -l
 [paste]
 method = "virtual"        # "virtual" (the Wayland virtual keyboard, or XTEST on X11), "uinput", or "auto" (tries "virtual", then "uinput")
 auto_paste = true         # `clippo plain` pastes after replacing the clipboard
-paste_on_select = true    # `clippo menu` pastes the entry you pick
+paste_on_select = true    # picking an entry in the history window pastes it
 keys = "shift-insert"     # "shift-insert", "ctrl-v" or "ctrl-shift-v"
 delay_ms = 100            # uinput only: wait before pasting, so the shortcut keys can be released
 release_modifiers = true  # uinput method, and all methods on X11: release Super and Alt before pasting
@@ -193,7 +190,7 @@ in the systemd user environment when you log in, and the service reads it from t
 In COSMIC Settings, open Keyboard > Keyboard shortcuts > Custom shortcuts and add:
 
 - Name: `Clipboard history`
-- Command: `clippo menu` (use the full path if it is not on `PATH`)
+- Command: `clippo window` (use the full path if it is not on `PATH`)
 - Shortcut: `Super+V`
 
 And for plain-text paste:
@@ -223,7 +220,7 @@ gsettings set org.gnome.shell.keybindings toggle-message-tray "['<Super>m']"
 
 Then open Settings > Keyboard > View and Customize Shortcuts > Custom Shortcuts, and add:
 
-- `clippo window` with the shortcut `Super+V` (or `clippo menu`, if you prefer the rofi picker)
+- `clippo window` with the shortcut `Super+V`
 - `clippo plain` with the shortcut `Super+Alt+V`
 - `clippo emoji` with the shortcut `Super+;`
 - `clippo macro 2` (or another macro number) on a shortcut of your choice

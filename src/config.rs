@@ -84,7 +84,7 @@ pub struct PasteConfig {
     pub method: PasteMethod,
     /// Paste straight away after `clippo plain`, unless `--no-paste` is given.
     pub auto_paste: bool,
-    /// Paste straight away after picking an entry in the menu.
+    /// Paste straight away after picking an entry in the history window.
     pub paste_on_select: bool,
     pub keys: PasteKeys,
     /// Wait before pressing the paste keys, so the shortcut's keys can be let go.
@@ -126,7 +126,7 @@ impl Default for PlainConfig {
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct Macro {
     pub format: String,
-    /// Shown instead of the live value in the menu.
+    /// Shown instead of the live value in the history window.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
 }

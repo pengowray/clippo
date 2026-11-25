@@ -2,9 +2,9 @@ mod clipboard;
 mod config;
 mod emoji;
 mod ingest;
+mod label;
 mod macros;
 mod markdown;
-mod menu;
 mod ocr;
 mod paste;
 mod plain;
@@ -50,9 +50,8 @@ enum Cmd {
     /// X11: own the clipboard with the formats on stdin until another app copies (run by clippo)
     #[command(hide = true)]
     ServeClipboard,
-    /// Open the history picker; selecting an entry copies it, and pastes it if `paste.paste_on_select` is on
-    Menu,
-    /// Open the clipboard history window (replaces `menu` once finished)
+    /// Open or close the clipboard history window; picking an entry copies it, and pastes it if `paste.paste_on_select` is on
+    #[command(alias = "menu")]
     Window,
     /// Open the emoji and symbol picker; picking one pastes it
     Emoji,
@@ -161,7 +160,6 @@ fn run(cli: Cli) -> Result<()> {
         Cmd::Watch => watch::run(&cfg, &paths),
         Cmd::Ingest => ingest::run(&cfg, &paths),
         Cmd::ServeClipboard => x11::serve_from_stdin(),
-        Cmd::Menu => menu::run(&cfg, &Store::open(&paths.db)?, &paths),
         Cmd::Window => ui::run(&cfg, &paths, ui::WindowPage::List),
         Cmd::Emoji => ui::run(&cfg, &paths, ui::WindowPage::Emoji),
         Cmd::Plain {
@@ -203,7 +201,7 @@ fn run(cli: Cli) -> Result<()> {
             };
             let mut out = std::io::stdout().lock();
             for entry in entries {
-                writeln!(out, "{}\t{}", entry.id, menu::label(&entry))?;
+                writeln!(out, "{}\t{}", entry.id, label::label(&entry))?;
             }
             Ok(())
         }
