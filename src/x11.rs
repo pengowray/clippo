@@ -35,6 +35,8 @@ use crate::store::Format;
 const READ_TIMEOUT: Duration = Duration::from_secs(2);
 /// How long `copy` waits for `serve-clipboard` to report that it owns the clipboard.
 const SERVE_START_TIMEOUT: Duration = Duration::from_secs(3);
+/// How long a paste waits for the shortcut's keys to be released.
+const KEY_RELEASE_WAIT: Duration = Duration::from_secs(1);
 /// Data bigger than this is sent in chunks of this size (the INCR protocol).
 const INCR_CHUNK: usize = 256 * 1024;
 
@@ -611,7 +613,8 @@ const XK_V: u32 = 0x0076;
 /// Super, Alt, Meta and Hyper, left and right: keys a shortcut may still be holding.
 const HELD_MODIFIERS: [u32; 8] = [0xffeb, 0xffec, 0xffe9, 0xffea, 0xffe7, 0xffe8, 0xffed, 0xffee];
 
-/// Press the paste keys through XTEST. With `release_modifiers`, Super, Alt, Meta and Hyper
+/// Press the paste keys through XTEST, once keys other than modifiers are released (or after
+/// `KEY_RELEASE_WAIT`). With `release_modifiers`, Super, Alt, Meta and Hyper
 /// keys that are still down are released first, so the paste isn't read as another shortcut.
 pub fn paste(keys: PasteKeys, release_modifiers: bool) -> Result<()> {
     let (conn, screen) = x11rb::connect(None).context("could not connect to the X display")?;
@@ -638,9 +641,21 @@ pub fn paste(keys: PasteKeys, release_modifiers: bool) -> Result<()> {
     };
     let fake = |kind: u8, code: Keycode| conn.xtest_fake_input(kind, code, CURRENT_TIME, root, 0, 0, 0);
 
+    // While a shortcut's key (the V of Super+V) is held, the window manager's key grab
+    // receives every key, so the paste would go to it instead of the focused app. Wait for
+    // the non-modifier keys to be released.
+    let modifier_keys = conn.get_modifier_mapping()?.reply()?.keycodes;
+    let deadline = Instant::now() + KEY_RELEASE_WAIT;
+    let mut down = conn.query_keymap()?.reply()?.keys;
+    let is_down = |down: &[u8; 32], k: Keycode| down[k as usize / 8] & (1 << (k % 8)) != 0;
+    while (min..=max).any(|k| is_down(&down, k) && !modifier_keys.contains(&k))
+        && Instant::now() < deadline
+    {
+        std::thread::sleep(Duration::from_millis(10));
+        down = conn.query_keymap()?.reply()?.keys;
+    }
     if release_modifiers {
-        let down = conn.query_keymap()?.reply()?.keys;
-        let is_down = |k: Keycode| down[k as usize / 8] & (1 << (k % 8)) != 0;
+        let is_down = |k: Keycode| is_down(&down, k);
         for sym in HELD_MODIFIERS {
             for k in keycodes(sym).into_iter().filter(|k| is_down(*k)) {
                 fake(KEY_RELEASE_EVENT, k)?;
